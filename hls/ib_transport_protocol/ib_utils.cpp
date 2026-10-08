@@ -29,27 +29,41 @@ EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "ib_transport_protocol.hpp"
 
-bool checkIfResponse(ibOpCode code)
+bool checkIfResponse(mrcOpCode code)
 {
-	return (code == RC_RDMA_READ_RESP_FIRST || code == RC_RDMA_READ_RESP_MIDDLE ||
-			code == RC_RDMA_READ_RESP_LAST  || code == RC_RDMA_READ_RESP_ONLY ||
-			code == RC_ACK);
+	return (code == MRC_ACK);
 }
 
-bool checkIfWrite(ibOpCode code)
+// Any MRC request: carries a METH (and a TSETH if BTH.ts)
+bool checkIfMrcRequest(mrcOpCode code)
 {
-	return (code == RC_RDMA_WRITE_FIRST || code == RC_RDMA_WRITE_MIDDLE ||
-			code == RC_RDMA_WRITE_LAST  || code == RC_RDMA_WRITE_ONLY);
+	return (code == MRC_RDMA_WRITE_FIRST || code == MRC_RDMA_WRITE_MIDDLE ||
+			code == MRC_RDMA_WRITE_LAST  || code == MRC_RDMA_WRITE_LAST_IMM ||
+			code == MRC_RDMA_WRITE_ONLY  || code == MRC_RDMA_WRITE_ONLY_IMM);
 }
 
-bool checkIfAethHeader(ibOpCode code)
+bool checkIfWrite(mrcOpCode code)
 {
-	return (code == RC_RDMA_READ_RESP_ONLY || code == RC_RDMA_READ_RESP_FIRST ||
-			code == RC_RDMA_READ_RESP_LAST || code == RC_ACK);
+	return (code == MRC_RDMA_WRITE_ONLY  	|| code == MRC_RDMA_WRITE_FIRST ||
+			code == MRC_RDMA_WRITE_MIDDLE	|| code == MRC_RDMA_WRITE_LAST 	||
+			code == MRC_RDMA_WRITE_LAST_IMM || code == MRC_RDMA_WRITE_ONLY_IMM);
 }
 
-bool checkIfRethHeader(ibOpCode code)
+bool checkIfAethHeader(mrcOpCode code)
 {
-	return (code == RC_RDMA_WRITE_ONLY  || code == RC_RDMA_WRITE_FIRST ||
-			code == RC_RDMA_READ_REQUEST);
+	return (code == MRC_ACK);
 }
+
+bool checkIfRethHeader(mrcOpCode code)
+{
+	return (code == MRC_RDMA_WRITE_ONLY  	|| code == MRC_RDMA_WRITE_FIRST ||
+			code == MRC_RDMA_WRITE_MIDDLE	|| code == MRC_RDMA_WRITE_LAST 	||
+			code == MRC_RDMA_WRITE_LAST_IMM || code == MRC_RDMA_WRITE_ONLY_IMM);
+}
+
+// MRC: every request (write) packet carries a METH after the BTH
+bool checkIfMethHeader(mrcOpCode code)
+{
+	return checkIfWrite(code);
+}
+

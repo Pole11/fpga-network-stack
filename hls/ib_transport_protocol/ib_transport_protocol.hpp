@@ -38,10 +38,13 @@ EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 using namespace hls;
 
 #define DBG_IBV
+#define DBG_FULL
 
 const uint32_t BTH_SIZE = 96;
 const uint32_t RETH_SIZE = 128;
 const uint32_t AETH_SIZE = 32;
+const uint32_t METH_SIZE = 32;   // MRC: on every request packet, right after the BTH
+const uint32_t TSETH_SIZE = 32;  // MRC: only when BTH.ts = 1, right after the METH
 const uint32_t IMMDT_SIZE = 32;
 
 const uint32_t RETRANS_RETRY_CNT = 12;
@@ -83,32 +86,24 @@ typedef enum {
     SYNC = 1
 } syncType;
 
-//See page 246
 typedef enum {
-    RC_SEND_FIRST = 0x00,
-    RC_SEND_MIDDLE = 0x01,
-    RC_SEND_LAST = 0x02,
-    RC_SEND_LAST_WITH_IMD = 0x03,
-	RC_SEND_ONLY = 0x04,
-    RC_SEND_ONLY_WITH_IMD = 0x05,
-	RC_RDMA_WRITE_FIRST = 0x06,
-	RC_RDMA_WRITE_MIDDLE = 0x07,
-	RC_RDMA_WRITE_LAST = 0x08,
-	RC_RDMA_WRITE_LAST_WITH_IMD = 0x09,
-	RC_RDMA_WRITE_ONLY = 0x0A,
-	RC_RDMA_WRITE_ONLY_WIT_IMD = 0x0B,
-	RC_RDMA_READ_REQUEST = 0x0C,
-	RC_RDMA_READ_RESP_FIRST = 0x0D,
-	RC_RDMA_READ_RESP_MIDDLE = 0x0E,
-	RC_RDMA_READ_RESP_LAST = 0x0F,
-	RC_RDMA_READ_RESP_ONLY = 0x10,
-	RC_ACK = 0x11,
-} ibOpCode;
+	MRC_RDMA_WRITE_FIRST         = 0xC6,
+	MRC_RDMA_WRITE_MIDDLE        = 0xC7,
+	MRC_RDMA_WRITE_LAST          = 0xC8,
+	MRC_RDMA_WRITE_LAST_IMM 	 = 0xC9,
+	MRC_RDMA_WRITE_ONLY          = 0xCA,
+	MRC_RDMA_WRITE_ONLY_IMM 	= 0xCB,
+	MRC_ACK                      = 0xD1,
+	MRC_SACK                     = 0xDC,
+	MRC_NACK                     = 0xDD,
+} mrcOpCode;
 
-bool checkIfResponse(ibOpCode code);
-bool checkIfWrite(ibOpCode code);
-bool checkIfAethHeader(ibOpCode code);
-bool checkIfRethHeader(ibOpCode code);
+bool checkIfResponse(mrcOpCode code);
+bool checkIfWrite(mrcOpCode code);
+bool checkIfAethHeader(mrcOpCode code);
+bool checkIfRethHeader(mrcOpCode code);
+bool checkIfMethHeader(mrcOpCode code);
+bool checkIfMrcRequest(mrcOpCode code);
 
 /* QP context */
 struct qpContext
@@ -173,7 +168,7 @@ struct dstTuple
 /* Internal read */
 struct memCmdInternal
 {
-	ibOpCode op_code;
+	mrcOpCode op_code;
 	ap_uint<16> qpn; //TODO required
 	ap_uint<64> addr;
 	ap_uint<32> len;
@@ -181,9 +176,9 @@ struct memCmdInternal
     ap_uint<1>  sync;
     ap_uint<6>  offs;
 	memCmdInternal() {}
-	memCmdInternal(ibOpCode op, ap_uint<16> qpn, ap_uint<64> addr, ap_uint<32> len, ap_uint<1> host)
+	memCmdInternal(mrcOpCode op, ap_uint<16> qpn, ap_uint<64> addr, ap_uint<32> len, ap_uint<1> host)
 		: op_code(op), qpn(qpn), addr(addr), len(len), host(host), sync(1), offs(0) {}
-    memCmdInternal(ibOpCode op, ap_uint<16> qpn, ap_uint<64> addr, ap_uint<32> len, ap_uint<1> host, ap_uint<1> sync, ap_uint<6> offs)
+    memCmdInternal(mrcOpCode op, ap_uint<16> qpn, ap_uint<64> addr, ap_uint<32> len, ap_uint<1> host, ap_uint<1> sync, ap_uint<6> offs)
 		: op_code(op), qpn(qpn), addr(addr), len(len), host(host), sync(sync), offs(offs) {}
     // TODO: need to set some default value?
     memCmdInternal(ap_uint<16> qpn, ap_uint<64> addr, ap_uint<32> len)
@@ -193,7 +188,7 @@ struct memCmdInternal
 /* Mem command */
 struct memCmd
 {
-	ibOpCode	op_code;
+	mrcOpCode	op_code;
 	ap_uint<16> qpn;
 	ap_uint<1>  lst;
 	ap_uint<48> addr;
@@ -205,7 +200,7 @@ struct memCmd
 	ap_uint<6>  offs;
 
 	memCmd() {}
-	memCmd(ibOpCode op_code, ap_uint<16> qpn, ap_uint<1> lst, ap_uint<64> addr, ap_uint<28> len, ap_uint<1> actv, ap_uint<1> host, ap_uint<6> offs)
+	memCmd(mrcOpCode op_code, ap_uint<16> qpn, ap_uint<1> lst, ap_uint<64> addr, ap_uint<28> len, ap_uint<1> actv, ap_uint<1> host, ap_uint<6> offs)
 		:op_code(op_code), qpn(qpn), lst(lst), addr(addr), dst(addr(51,48)), strm(addr(53,52)), len(len), actv(actv), host(host), offs(offs) {}
 };
 
@@ -219,7 +214,7 @@ struct txPacketInfo
 
 struct txMeta
 {
-	ibOpCode 	 op_code; // 32
+	mrcOpCode 	 op_code; // 32
 	ap_uint<16>  qpn; // vfid, pid
 	ap_uint<1>   host;
 	ap_uint<1>   lst;
@@ -229,8 +224,8 @@ struct txMeta
     ap_uint<32>  len;
     ap_uint<32>  imm;
 	txMeta()
-		:op_code(RC_RDMA_WRITE_ONLY) {}
-	txMeta(ibOpCode op, ap_uint<16> qp, ap_uint<1> host, ap_uint<1> lst, ap_uint<6> offs, 
+		:op_code(MRC_RDMA_WRITE_ONLY) {}
+	txMeta(mrcOpCode op, ap_uint<16> qp, ap_uint<1> host, ap_uint<1> lst, ap_uint<6> offs, 
         ap_uint<64> laddr, ap_uint<64> raddr, ap_uint<32> len, ap_uint<32> imm)
 				:op_code(op), qpn(qp), host(host), lst(lst), offs(offs), raddr(raddr), laddr(laddr), len(len), imm(imm) {}
 };
@@ -238,7 +233,7 @@ struct txMeta
 /* ACK meta */
 struct ackMeta 
 {
-    ibOpCode   op_code; // 32
+    mrcOpCode   op_code; // 32
 	ap_uint<16> qpn;
     ap_uint<1> host;
     ap_uint<4> dst;
@@ -246,7 +241,7 @@ struct ackMeta
     ap_uint<1> lst;
 
 	ackMeta() {}
-	ackMeta(ibOpCode op_code, ap_uint<16> qpn, ap_uint<1> host, ap_uint<4> dst, ap_uint<2> strm, ap_uint<1> lst)
+	ackMeta(mrcOpCode op_code, ap_uint<16> qpn, ap_uint<1> host, ap_uint<4> dst, ap_uint<2> strm, ap_uint<1> lst)
 		: op_code(op_code), qpn(qpn), host(host), dst(dst), strm(strm),  lst(lst) {}
 };
 
@@ -270,7 +265,7 @@ struct ackEvent
 //TODO event for writes addr + len, no psn
 struct event
 {
-	ibOpCode 	op_code;
+	mrcOpCode 	op_code;
 	ap_uint<24> qpn;
 	ap_uint<64> addr;
 	ap_uint<32> length;
@@ -278,29 +273,29 @@ struct event
 	bool		validPsn;
 	bool		isNak;
 	event()
-		:op_code(RC_ACK), validPsn(false), isNak(false) {}
-	event(ibOpCode op, ap_uint<24> qp)
+		:op_code(MRC_ACK), validPsn(false), isNak(false) {}
+	event(mrcOpCode op, ap_uint<24> qp)
 		:op_code(op), qpn(qp), validPsn(false), isNak(false) {}
 	event(ackEvent& aev)
-		:op_code(RC_ACK), qpn(aev.qpn), psn(aev.psn), validPsn(aev.validPsn), isNak(aev.isNak) {}
-	/*event(ibOpCode op, ap_uint<24> qp, ap_uint<24> psn, bool nak)
+		:op_code(MRC_ACK), qpn(aev.qpn), psn(aev.psn), validPsn(aev.validPsn), isNak(aev.isNak) {}
+	/*event(mrcOpCode op, ap_uint<24> qp, ap_uint<24> psn, bool nak)
 		:op_code(op), qpn(qp), psn(psn), validPsn(true), isNak(nak) {}*/
-	event(ibOpCode op, ap_uint<24> qp, ap_uint<32> len)
+	event(mrcOpCode op, ap_uint<24> qp, ap_uint<32> len)
 		:op_code(op), qpn(qp), addr(0), length(len), psn(0), validPsn(false), isNak(false) {}
-	event(ibOpCode op, ap_uint<24> qp, ap_uint<64> addr, ap_uint<32> len)
+	event(mrcOpCode op, ap_uint<24> qp, ap_uint<64> addr, ap_uint<32> len)
 		:op_code(op), qpn(qp), addr(addr), length(len), psn(0), validPsn(false), isNak(false) {}
-	event(ibOpCode op, ap_uint<24> qp, ap_uint<32> len, ap_uint<24> psn)
+	event(mrcOpCode op, ap_uint<24> qp, ap_uint<32> len, ap_uint<24> psn)
 		:op_code(op), qpn(qp), addr(0), length(len), psn(psn), validPsn(true), isNak(false) {}
-	event(ibOpCode op, ap_uint<24> qp, ap_uint<64> addr, ap_uint<32> len, ap_uint<24> psn)
+	event(mrcOpCode op, ap_uint<24> qp, ap_uint<64> addr, ap_uint<32> len, ap_uint<24> psn)
 		:op_code(op), qpn(qp), addr(addr), length(len), psn(psn), validPsn(true), isNak(false) {}
 };
 
 /* Pakage info */
 struct pkgSplit
 {
-	ibOpCode op_code;
+	mrcOpCode op_code;
 	pkgSplit() {}
-	pkgSplit(ibOpCode op)
+	pkgSplit(mrcOpCode op)
 		:op_code(op) {}
 };
 
@@ -324,7 +319,7 @@ struct pkgInfo
 
 struct retransEvent
 {
-	ibOpCode 	op_code;
+	mrcOpCode 	op_code;
 	ap_uint<24> qpn;
 	ap_uint<64> localAddr;
 	ap_uint<64> remoteAddr;
@@ -335,8 +330,8 @@ struct retransEvent
 	bool		validPsn;  //TODO remove?
 	bool		isNak; //TODO remove?
 	retransEvent()
-		:op_code(RC_ACK), validPsn(false), isNak(false) {}
-	retransEvent(ibOpCode op, ap_uint<24> qp, ap_uint<64> laddr, ap_uint<64> raddr, ap_uint<32> len, ap_uint<24> psn, ap_uint<1> lst, ap_uint<4> offs)
+		:op_code(MRC_ACK), validPsn(false), isNak(false) {}
+	retransEvent(mrcOpCode op, ap_uint<24> qp, ap_uint<64> laddr, ap_uint<64> raddr, ap_uint<32> len, ap_uint<24> psn, ap_uint<1> lst, ap_uint<4> offs)
 		:op_code(op), qpn(qp), localAddr(laddr), remoteAddr(raddr),length(len), psn(psn), lst(lst), offs(offs), validPsn(true), isNak(false) {}
 };
 
@@ -348,6 +343,37 @@ struct memMeta
 	memMeta() {}
 	memMeta(bool w, ap_uint<64> addr, ap_uint<32> len)
 		:write(w), address(addr), length(len) {}
+};
+
+// Parsed MRC extension headers of one request packet (all zero for non-MRC packets)
+// Only for METH and TSETH headers, all in one struct for praticity
+struct mrcExt
+{
+	bool        hasMeth; // if it is a request
+	ap_uint<16> rqmsn;
+	ap_uint<16> msn;
+	bool        hasTseth;
+	ap_uint<16> txTimestamp;
+	bool        tsr;
+	mrcExt() : hasMeth(false), rqmsn(0), msn(0), hasTseth(false), txTimestamp(0), tsr(false) {}
+	// bytes these headers occupy on the wire, needed for the payload-length computation
+	ap_uint<4> length() const { return (hasMeth ? 4 : 0) + (hasTseth ? 4 : 0); }
+};
+
+// rx_process_ibh -> rx_strip_mrc_eth
+struct mrcEthMeta
+{
+	mrcOpCode op_code;
+	bool     ts;
+	mrcEthMeta() {}
+	mrcEthMeta(mrcOpCode op, bool ts) : op_code(op), ts(ts) {}
+};
+
+// rx_strip_mrc_eth -> rx_process_exh (replaces the bare mrcOpCode it used to receive)
+struct exhOpMeta
+{
+	mrcOpCode op_code;
+	mrcExt   mrc;
 };
 
 
@@ -375,13 +401,13 @@ class BaseTransportHeader : public packetHeader<W, BTH_SIZE> {
 public:
 	BaseTransportHeader() {} //TODO set initialize some fields
 
-	void setOpCode(ibOpCode opcode)
+	void setOpCode(mrcOpCode opcode)
 	{
 		header(7, 0) =  (uint8_t) opcode;
 	}
-	ibOpCode getOpCode()
+	mrcOpCode getOpCode()
 	{
-		return ibOpCode((uint16_t) header(7, 0));
+		return mrcOpCode((uint16_t) header(7, 0));
 	}
 	void setPartitionKey(ap_uint<16> key)
 	{
@@ -411,24 +437,34 @@ public:
 	{
 		header[71] = bit;
 	}
+	bool getAckReq()       { return header[71]; }
+	void setRtx(bool bit)  { header[69] = bit; }
+	bool getRtx()          { return header[69]; }
+	void setTs(bool bit)   { header[68] = bit; }
+	bool getTs()           { return header[68]; }
 };
 
 struct ibhMeta
 {
-	ibOpCode op_code;
+	mrcOpCode op_code;
 	ap_uint<16> partition_key;
 	ap_uint<24> dest_qp;
 	ap_uint<24> psn;
 	bool		validPSN;
-	ap_uint<22> numPkg; //TODO does not really fit here //TODO how many bits does this need?
+	ap_uint<22> numPkg;
+	bool        ackReq;   // BTH.a
+	bool        rtx;      // BTH.rtx
+	bool        ts;       // BTH.ts
 	ibhMeta()
-		:op_code(RC_ACK) {} //TODO
-	ibhMeta(ibOpCode op, ap_uint<16> key, ap_uint<24> qp)
-			:op_code(op), partition_key(key), dest_qp(qp), psn(0), validPSN(false), numPkg(1) {}
-	ibhMeta(ibOpCode op, ap_uint<16> key, ap_uint<24> qp, ap_uint<22> numPkg)
-			:op_code(op), partition_key(key), dest_qp(qp), psn(0), validPSN(false), numPkg(numPkg) {}
-	ibhMeta(ibOpCode op, ap_uint<16> key, ap_uint<24> qp, ap_uint<24> psn, bool vp)
-			:op_code(op), partition_key(key), dest_qp(qp), psn(psn), validPSN(vp), numPkg(1) {}
+		:op_code(MRC_ACK), ackReq(false), rtx(false), ts(false) {}
+	ibhMeta(mrcOpCode op, ap_uint<16> key, ap_uint<24> qp)
+		:op_code(op), partition_key(key), dest_qp(qp), psn(0), validPSN(false), numPkg(1), ackReq(false), rtx(false), ts(false) {}
+	ibhMeta(mrcOpCode op, ap_uint<16> key, ap_uint<24> qp, ap_uint<22> numPkg)
+		:op_code(op), partition_key(key), dest_qp(qp), psn(0), validPSN(false), numPkg(numPkg), ackReq(false), rtx(false), ts(false) {}
+	ibhMeta(mrcOpCode op, ap_uint<16> key, ap_uint<24> qp, ap_uint<24> psn, bool vp)
+		:op_code(op), partition_key(key), dest_qp(qp), psn(psn), validPSN(vp), numPkg(1), ackReq(false), rtx(false), ts(false) {}
+	ibhMeta(mrcOpCode op, ap_uint<16> key, ap_uint<24> qp, ap_uint<24> psn, bool vp, bool ar, bool rtx, bool ts)
+		:op_code(op), partition_key(key), dest_qp(qp), psn(psn), validPSN(vp), numPkg(1), ackReq(ar), rtx(rtx), ts(ts) {}
 };
 
 struct exhMeta
@@ -523,6 +559,9 @@ class ExHeader: public packetHeader<W, RETH_SIZE>
 	using packetHeader<W, RETH_SIZE>::header;
 
 public:
+
+	mrcExt mrc;   // METH/TSETH of MRC requests; zero otherwise
+
 	ExHeader() {}
 
 	ExHeader(RdmaExHeader<W>& h)
@@ -560,12 +599,13 @@ struct InvalidateExHeader //IETH
 
 struct psnPkg
 {
-    ibOpCode opcode;
+    mrcOpCode opcode;
 	ap_uint<32> val1;
     ap_uint<32> val2;
 	ap_uint<8> ctl;
 
-	psnPkg(ibOpCode opcode, ap_uint<32> val1, ap_uint<32> val2, ap_uint<8> ctl) 
+	psnPkg() {}
+	psnPkg(mrcOpCode opcode, ap_uint<32> val1, ap_uint<32> val2, ap_uint<8> ctl) 
 		: opcode(opcode), val1(val1), val2(val2), ctl(ctl) {}
 };
 

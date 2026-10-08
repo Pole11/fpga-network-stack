@@ -36,6 +36,18 @@
 #include "ap_axi_sdata.h"
 #endif
 
+#define DBG_FULL 
+#ifdef DBG_FULL
+#define DBG_WORD(stage, w)                                          \
+	do {                                                            \
+		std::cout << "[" << stage << "] ";         \
+		print(std::cout, w);                                        \
+		std::cout << (w.last ? "  <- last" : "") << std::endl;      \
+	} while (0)
+#else
+#define DBG_WORD(stage, w) do {} while (0)
+#endif
+
 //Adaptation of ap_axiu<>
 
 /*template <int D>
@@ -451,6 +463,7 @@ void rshiftWordByOctet(	uint16_t offset,
 		if (!input.empty())
 		{
 			input.read(currWord);
+			DBG_WORD("R SHIFT BY OCTET IN", currWord);
 
 			if (!rs_firstWord)
 			{
@@ -471,6 +484,7 @@ void rshiftWordByOctet(	uint16_t offset,
 					//assignDest(sendWord, currWord);
 				}//else offset
 				output.write(sendWord);
+				DBG_WORD("R SHIFT BY OCTET OUT", sendWord);
 			}
 
 			prevWord = currWord;
@@ -497,6 +511,7 @@ void rshiftWordByOctet(	uint16_t offset,
 		//assignDest(sendWord, currWord);
 
 		output.write(sendWord);
+		DBG_WORD("R SHIFT BY OCTET OUT", sendWord);
 		fsmState = PKG;
 		break;
 	}

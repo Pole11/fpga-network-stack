@@ -166,6 +166,7 @@ void state_table(
 			}
 			else
 			{
+				// here there is the mapping of resp_old_outstanding and oldest_outstanding_psn
 				stateTable2rxIbh_rsp.write(rxStateRsp(entry.resp_epsn, entry.resp_old_outstanding, entry.resp_epsn, entry.retryCounter));
 			}
 		}

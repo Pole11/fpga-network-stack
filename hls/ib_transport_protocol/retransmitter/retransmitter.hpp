@@ -40,9 +40,9 @@ struct retransUpdate
 {
 	ap_uint<16> qpn;
 	ap_uint<24> latest_acked_req; //TODO rename?
-    ibOpCode op_code;
+    mrcOpCode op_code;
 	retransUpdate() {}
-	retransUpdate(ap_uint<16> qpn, ap_uint<24> psn, ibOpCode op_code)
+	retransUpdate(ap_uint<16> qpn, ap_uint<24> psn, mrcOpCode op_code)
 		:qpn(qpn), latest_acked_req(psn), op_code(op_code) {}
 };
 
@@ -72,9 +72,9 @@ struct retransMeta
 {
 	ap_uint<16> qpn;
 	ap_uint<24> psn;
-	ibOpCode	opCode;
+	mrcOpCode	opCode;
 	retransMeta() {}
-	retransMeta(ap_uint<16> qpn, ap_uint<24> psn, ibOpCode op)
+	retransMeta(ap_uint<16> qpn, ap_uint<24> psn, mrcOpCode op)
 		:qpn(qpn), psn(psn), opCode(op){}
 };
 
@@ -95,7 +95,7 @@ struct retransEntry
 {
 	ap_uint<16> qpn;
 	ap_uint<24> psn;
-	ibOpCode	opCode;
+	mrcOpCode	opCode;
 	ap_uint<64> localAddr;
 	ap_uint<64> remoteAddr;
 	ap_uint<32> length;
@@ -103,7 +103,7 @@ struct retransEntry
     ap_uint<4>  offs;
     ap_uint<1>  host;
 	retransEntry() {}
-	retransEntry(ap_uint<16> qpn, ap_uint<24> psn, ibOpCode op, ap_uint<64> laddr, ap_uint<64> raddr, ap_uint<32> len, ap_uint<1> lst, ap_uint<4> offs, ap_uint<1> host)
+	retransEntry(ap_uint<16> qpn, ap_uint<24> psn, mrcOpCode op, ap_uint<64> laddr, ap_uint<64> raddr, ap_uint<32> len, ap_uint<1> lst, ap_uint<4> offs, ap_uint<1> host)
 		:qpn(qpn), psn(psn), opCode(op), localAddr(laddr), remoteAddr(raddr), length(len), lst(lst), offs(offs), host(host) {}
 	retransEntry(retransMeta meta, retransAddrLen addrlen)
 		:qpn(meta.qpn), psn(meta.psn), opCode(meta.opCode), localAddr(addrlen.localAddr), remoteAddr(addrlen.remoteAddr), length(addrlen.length), lst(addrlen.lst), offs(addrlen.offs), host(addrlen.host) {}
@@ -142,7 +142,7 @@ struct retransMetaEntry
 {
 	ap_uint<24> psn;
 	ap_uint<16> next;
-	ibOpCode	opCode;
+	mrcOpCode	opCode;
 	ap_uint<64> localAddr;
 	ap_uint<64> remoteAddr;
 	ap_uint<32> length;
@@ -414,35 +414,21 @@ void process_retransmissions(
                 break;
             } else {
                 // Address forwarding
-                if(update.op_code == RC_RDMA_READ_RESP_FIRST || update.op_code == RC_RDMA_READ_RESP_ONLY || update.op_code == RC_ACK) 
+                if(update.op_code == MRC_ACK) 
                 {
                     retrans2rx_init.write(retransRdInit(meta.localAddr, meta.lst, meta.host));
 
                     std::cout << "[PROCESS RETRANSMISSION " << INSTID << "]: state UPDATE_1 forwarding local address, laddr " << meta.localAddr << ", last" << meta.lst << std::endl;
                 }
+				// Move index
+				ptrMeta.head = meta.next;
+				ptrMeta.valid = !meta.isTail;
 
-                // Packet update
-                if(update.op_code == RC_RDMA_READ_RESP_FIRST || update.op_code == RC_RDMA_READ_RESP_MIDDLE) {
-                    // Packet update
-                    meta.localAddr += PMTU;
-                    meta.remoteAddr += PMTU;
-                    meta.length -= PMTU;
-                    meta.psn += 1;
-                    // Update meta table
-                    metaReqFifo.write(retransMetaReq(ptrMeta.head, retransMetaEntry(meta)));
+				// Clear free list
+				releaseFifo.write(curr);
+				curr = meta.next;
 
-                    std::cout << "[PROCESS RETRANSMISSION " << INSTID << "]: state UPDATE_1 packet update, psn " << meta.psn << ", laddr " << meta.localAddr << ", raddr " << meta.remoteAddr << ", len " << meta.length << std::endl;
-                } else {
-                    // Move index
-                    ptrMeta.head = meta.next;
-                    ptrMeta.valid = !meta.isTail;
-
-                    // Clear free list
-                    releaseFifo.write(curr);
-                    curr = meta.next;
-
-                    std::cout << "[PROCESS RETRANSMISSION " << INSTID << "]: state UPDATE_1 ack update, psn " << meta.psn << std::endl;
-                }
+				std::cout << "[PROCESS RETRANSMISSION " << INSTID << "]: state UPDATE_1 ack update, psn " << meta.psn << std::endl;
             }
 
             // update the lock

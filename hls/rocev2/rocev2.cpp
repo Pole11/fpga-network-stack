@@ -24,25 +24,28 @@
  * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
  * EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+
+// this is the Balboa top level
+
 #include "rocev2_config.hpp"
 #include "rocev2.hpp"
 
 template <int WIDTH>
 void rocev2(
-	hls::stream<net_axis<WIDTH> >& s_axis_rx_data,
-	hls::stream<net_axis<WIDTH> >&	m_axis_tx_data,
+	hls::stream<net_axis<WIDTH> >& s_axis_rx_data, // from gap enforcer
+	hls::stream<net_axis<WIDTH> >&	m_axis_tx_data, // to the read request trimmer
 				
 	// S(R)Q
-	hls::stream<txMeta>& s_axis_sq_meta,
+	hls::stream<txMeta>& s_axis_sq_meta, // from user commands
 
 	// ACKs
-	hls::stream<ackMeta>& m_axis_rx_ack_meta,
+	hls::stream<ackMeta>& m_axis_rx_ack_meta, // to user commands
 				
 	// RDMA
-	hls::stream<memCmd>& m_axis_mem_write_cmd,
-	hls::stream<memCmd>& m_axis_mem_read_cmd,
-	hls::stream<net_axis<WIDTH> >& m_axis_mem_write_data,
-	hls::stream<net_axis<WIDTH> >& s_axis_mem_read_data,
+	hls::stream<memCmd>& m_axis_mem_write_cmd, // to memory
+	hls::stream<memCmd>& m_axis_mem_read_cmd, // to memory
+	hls::stream<net_axis<WIDTH> >& m_axis_mem_write_data, // to memory
+	hls::stream<net_axis<WIDTH> >& s_axis_mem_read_data, // to memory
 
 	// QP
 	hls::stream<qpContext>&	s_axis_qp_interface,
@@ -143,6 +146,7 @@ void rocev2(
 		RDMA_DEFAULT_PORT
 	);
 
+	// here is the instantiation of the transport
 	/*
 	 * IB PROTOCOL
 	 */
