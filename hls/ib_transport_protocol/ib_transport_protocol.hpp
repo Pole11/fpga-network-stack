@@ -58,7 +58,7 @@ const ap_uint<16> RDMA_DEFAULT_PORT = 0x12B7; //4791 --> 0x12B7
 typedef enum {RESET, INIT, READY_RECV, READY_SEND, SQ_ERROR, ERROR} qpState;
 
 typedef enum {AETH, RETH, RAW, IMMED} pkgType;
-typedef enum {SHIFT_AETH, SHIFT_RETH, SHIFT_NONE} pkgShiftType;
+typedef enum {SHIFT_AETH, SHIFT_RETH, SHIFT_NONE, SHIFT_RETH_IMM} pkgShiftType;
 typedef enum {PKG_SEND, PKG_WRITE} pkgOper;
 
 typedef enum {
@@ -94,8 +94,11 @@ typedef enum {
 	MRC_RDMA_WRITE_ONLY          = 0xCA,
 	MRC_RDMA_WRITE_ONLY_IMM 	= 0xCB,
 	MRC_ACK                      = 0xD1,
+	MRC_EP_REQ                   = 0xD8, 
+	MRC_EP_RSP                   = 0xD9, 
 	MRC_SACK                     = 0xDC,
 	MRC_NACK                     = 0xDD,
+	MRC_PROBE_REQ                = 0xDE, 
 } mrcOpCode;
 
 bool checkIfResponse(mrcOpCode code);
@@ -104,6 +107,8 @@ bool checkIfAethHeader(mrcOpCode code);
 bool checkIfRethHeader(mrcOpCode code);
 bool checkIfMethHeader(mrcOpCode code);
 bool checkIfMrcRequest(mrcOpCode code);
+bool checkIfMrcCtrl(mrcOpCode code);
+bool checkIfImmDt(mrcOpCode code);
 
 /* QP context */
 struct qpContext
@@ -347,6 +352,8 @@ struct memMeta
 
 // Parsed MRC extension headers of one request packet (all zero for non-MRC packets)
 // Only for METH and TSETH headers, all in one struct for praticity
+// Parsed MRC extension headers of one request packet (all zero for non-MRC packets)
+// METH and TSETH (stripped by rx_strip_mrc_eth) and ImmDt (parsed by rx_process_exh)
 struct mrcExt
 {
 	bool        hasMeth; // if it is a request
@@ -355,9 +362,12 @@ struct mrcExt
 	bool        hasTseth;
 	ap_uint<16> txTimestamp;
 	bool        tsr;
-	mrcExt() : hasMeth(false), rqmsn(0), msn(0), hasTseth(false), txTimestamp(0), tsr(false) {}
+	bool        hasImmDt;  // NEW: *_IMM opcodes
+	ap_uint<32> immDt;     // NEW
+	mrcExt() : hasMeth(false), rqmsn(0), msn(0), hasTseth(false), txTimestamp(0), tsr(false),
+	           hasImmDt(false), immDt(0) {}
 	// bytes these headers occupy on the wire, needed for the payload-length computation
-	ap_uint<4> length() const { return (hasMeth ? 4 : 0) + (hasTseth ? 4 : 0); }
+	ap_uint<4> length() const { return (hasMeth ? 4 : 0) + (hasTseth ? 4 : 0) + (hasImmDt ? 4 : 0); }
 };
 
 // rx_process_ibh -> rx_strip_mrc_eth
@@ -518,6 +528,17 @@ public:
 	}
 };
 
+// AETH syndrome bits [6:5]. MRC: the credit field of an ACK is always 0x1F (6.4)
+typedef enum { AETH_ACK = 0x0, AETH_RNR_NAK = 0x1, AETH_RESERVED = 0x2, AETH_NAK = 0x3 } aethType;
+// Syndrome bits [4:0] when the type is AETH_NAK
+typedef enum {
+	AETH_NAK_PSN_SEQ_ERR    = 0x0, // not applicable in MRC (Table 6-11)
+	AETH_NAK_INVALID_REQ    = 0x1, // MRC: inflight WriteIMM limit exceeded (Table 6-15)
+	AETH_NAK_REMOTE_ACCESS  = 0x2, // e.g. R_Key violation
+	AETH_NAK_REMOTE_OP_ERR  = 0x3, // MRC: resources unavailable (Table 6-15)
+	AETH_NAK_INVALID_RD_REQ = 0x4
+} aethNakCode;
+
 /**
  * AETH, see page 254, page format on 337, NAK codes page 338
  * [7:0] syndrome, indicates if this is an ACK or NAK
@@ -551,6 +572,9 @@ public:
 	{
 		return (header(6,5) == 0x3);
 	}
+	ap_uint<2> getAckType()  { return header(6, 5); } // aethType
+	ap_uint<5> getAckValue() { return header(4, 0); } // credits (ACK), timer (RNR NAK), aethNakCode (NAK)
+	bool       isACK()       { return (header(6, 5) == AETH_ACK); }
 };
 
 template <int W>
