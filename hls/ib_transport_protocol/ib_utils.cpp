@@ -67,10 +67,12 @@ bool checkIfMethHeader(mrcOpCode code)
 	return checkIfWrite(code);
 }
 
-// MRC control packets: header-only, routed to the control path by rx_process_ibh
+// MRC control packets: header-only, routed to the control path by rx_process_ibh.
+// The transport ACK (AETH) is one of them: it is handled by rx_req_fsm (mrc_rx_req.hpp).
 bool checkIfMrcCtrl(mrcOpCode code)
 {
-	return (code == MRC_SACK || code == MRC_NACK || code == MRC_PROBE_REQ ||
+	return (code == MRC_ACK  ||
+			code == MRC_SACK || code == MRC_NACK || code == MRC_PROBE_REQ ||
 			code == MRC_EP_REQ || code == MRC_EP_RSP);
 }
 

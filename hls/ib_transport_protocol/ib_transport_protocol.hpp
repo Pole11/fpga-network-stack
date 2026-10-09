@@ -40,6 +40,18 @@ using namespace hls;
 #define DBG_IBV
 #define DBG_FULL
 
+// Prints one bus word with the stage name and instance: [STAGE 0] 06 00 ff ff ... keep last
+#ifdef DBG_FULL
+#define DBG_WORD(stage, w)                                          \
+	do {                                                            \
+		std::cout << "[" << stage << " " << INSTID << "] ";         \
+		print(std::cout, w);                                        \
+		std::cout << (w.last ? "  <- last" : "") << std::endl;      \
+	} while (0)
+#else
+#define DBG_WORD(stage, w) do {} while (0)
+#endif
+
 const uint32_t BTH_SIZE = 96;
 const uint32_t RETH_SIZE = 128;
 const uint32_t AETH_SIZE = 32;
@@ -350,8 +362,6 @@ struct memMeta
 		:write(w), address(addr), length(len) {}
 };
 
-// Parsed MRC extension headers of one request packet (all zero for non-MRC packets)
-// Only for METH and TSETH headers, all in one struct for praticity
 // Parsed MRC extension headers of one request packet (all zero for non-MRC packets)
 // METH and TSETH (stripped by rx_strip_mrc_eth) and ImmDt (parsed by rx_process_exh)
 struct mrcExt

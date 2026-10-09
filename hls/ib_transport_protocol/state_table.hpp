@@ -78,6 +78,36 @@ struct rxStateReq
 		:qpn(qpn), epsn(psn), isResponse(isRsp), retryCounter(rc), write(true) {}
 };
 
+// ------------------------------------------------------------------------------------------------
+// Requestor reliability state: rx_req_fsm (MRC control path) <-> state_table
+//
+// rx_req_fsm is the ONLY writer of the requestor acknowledgement state (qp_interface only
+// initialises it). Step B keeps RC semantics:
+//   unack_psn    = oldest unacknowledged PSN (last acked + 1), stored in req_old_unack
+//   max_psn_sent = req_next_psn - 1 (req_next_psn is written by TX)
+// Step C turns this pair into the Table 7-4 state (and may move it into its own table): only these
+// two structs, the state_table branch below and rx_req_fsm change.
+// ------------------------------------------------------------------------------------------------
+struct reqStateReq
+{
+	ap_uint<16> qpn;
+	ap_uint<24> unack_psn;
+	bool        write;
+	reqStateReq() : write(false) {}
+	reqStateReq(ap_uint<16> qpn)
+		: qpn(qpn), unack_psn(0), write(false) {}
+	reqStateReq(ap_uint<16> qpn, ap_uint<24> unack)
+		: qpn(qpn), unack_psn(unack), write(true) {}
+};
+
+struct reqStateRsp
+{
+	ap_uint<24> unack_psn;
+	ap_uint<24> max_psn_sent;
+	reqStateRsp() {}
+	reqStateRsp(ap_uint<24> unack, ap_uint<24> maxSent)
+		: unack_psn(unack), max_psn_sent(maxSent) {}
+};
 
 struct rxStateRsp
 {
@@ -111,19 +141,23 @@ struct txStateReq
 
 template <int INSTID>
 void state_table(	hls::stream<rxStateReq>& rxIbh2stateTable_upd_req,
-						hls::stream<txStateReq>& txIbh2stateTable_upd_req,
-						hls::stream<ifStateReq>& qpi2stateTable_upd_req,
-						hls::stream<rxStateRsp>& stateTable2rxIbh_rsp,
-						hls::stream<stateTableEntry>& stateTable2txIbh_rsp,
-						hls::stream<stateTableEntry>& stateTable2qpi_rsp);
+					hls::stream<reqStateReq>& rxCtrl2stateTable_upd_req,
+					hls::stream<txStateReq>& txIbh2stateTable_upd_req,
+					hls::stream<ifStateReq>& qpi2stateTable_upd_req,
+					hls::stream<rxStateRsp>& stateTable2rxIbh_rsp,
+					hls::stream<reqStateRsp>& stateTable2rxCtrl_rsp,
+					hls::stream<stateTableEntry>& stateTable2txIbh_rsp,
+					hls::stream<stateTableEntry>& stateTable2qpi_rsp);
 
 
 template <int INSTID = 0>
 void state_table(		
 	hls::stream<rxStateReq>& rxIbh2stateTable_upd_req,
+	hls::stream<reqStateReq>& rxCtrl2stateTable_upd_req,
 	hls::stream<txStateReq>& txIbh2stateTable_upd_req,
 	hls::stream<ifStateReq>& qpi2stateTable_upd_req,
 	hls::stream<rxStateRsp>& stateTable2rxIbh_rsp,
+	hls::stream<reqStateRsp>& stateTable2rxCtrl_rsp,
 	hls::stream<stateTableEntry>& stateTable2txIbh_rsp,
 	hls::stream<stateTableEntry>& stateTable2qpi_rsp
 ) {
@@ -138,12 +172,15 @@ void state_table(
 #endif
 
 	rxStateReq rxRequest;
+	reqStateReq ctrlRequest;
 	txStateReq txRequest;
 	ifStateReq ifRequest;
 
 	if (!rxIbh2stateTable_upd_req.empty())
 	{
 		rxIbh2stateTable_upd_req.read(rxRequest);
+		// Since step B rx_ibh_fsm only handles requests: the isResponse branches below are
+		// unreachable (cleanup)
 		if (rxRequest.write)
 		{
 			if (rxRequest.isResponse)
@@ -169,6 +206,19 @@ void state_table(
 				// here there is the mapping of resp_old_outstanding and oldest_outstanding_psn
 				stateTable2rxIbh_rsp.write(rxStateRsp(entry.resp_epsn, entry.resp_old_outstanding, entry.resp_epsn, entry.retryCounter));
 			}
+		}
+	}
+	else if (!rxCtrl2stateTable_upd_req.empty())
+	{
+		rxCtrl2stateTable_upd_req.read(ctrlRequest);
+		if (ctrlRequest.write)
+		{
+			state_table[ctrlRequest.qpn].req_old_unack = ctrlRequest.unack_psn;
+		}
+		else
+		{
+			stateTableEntry entry = state_table[ctrlRequest.qpn];
+			stateTable2rxCtrl_rsp.write(reqStateRsp(entry.req_old_unack, entry.req_next_psn - 1));
 		}
 	}
 	else if (!txIbh2stateTable_upd_req.empty())

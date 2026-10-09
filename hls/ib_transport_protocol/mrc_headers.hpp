@@ -37,6 +37,7 @@ static_assert(MRC_CTRL_HDR_SIZE >= NETH_SIZE, "MRC_CTRL_HDR_SIZE too small for N
 static_assert(MRC_CTRL_HDR_SIZE >= PETH_SIZE, "MRC_CTRL_HDR_SIZE too small for PETH");
 static_assert(MRC_CTRL_HDR_SIZE >= ERTH_SIZE, "MRC_CTRL_HDR_SIZE too small for ERTH");
 static_assert(MRC_CTRL_HDR_SIZE >= EETH_SIZE, "MRC_CTRL_HDR_SIZE too small for EETH");
+static_assert(MRC_CTRL_HDR_SIZE >= AETH_SIZE, "MRC_CTRL_HDR_SIZE too small for AETH");
 
 // ------------------------------------------------------------------------------------------------
 // Field encodings
@@ -76,6 +77,7 @@ inline ap_uint<6> mrcCtrlHeaderBytes(mrcOpCode op)
 #pragma HLS inline
 	switch (op)
 	{
+    case MRC_ACK:       return AETH_SIZE / 8;
 	case MRC_SACK:      return SACK_SIZE / 8;
 	case MRC_NACK:      return NETH_SIZE / 8;
 	case MRC_PROBE_REQ: return PETH_SIZE / 8;
@@ -255,6 +257,7 @@ public:
 // rx_process_ibh -> rx_process_ctrl: BTH fields of a control packet
 //
 // Meaning of dest_qp / psn depends on the opcode (Table 7-6):
+//   ACK       dqp = requestor QP, psn = acked psn (RC, step B) / cack_psn (MRC, step C)
 //   SACK      dqp = requestor QP, psn = cack_psn
 //   NACK      dqp = requestor QP, psn = psn of the packet that triggered the NACK
 //   PROBE     dqp = peer QP,      psn not consumed
@@ -298,7 +301,12 @@ struct mrcCtrlMeta
 	ap_uint<MRC_CTRL_HDR_SIZE> raw;
 
 	mrcCtrlMeta() : op_code(MRC_SACK), ackReq(false), rtx(false), lengthOk(false) {}
-
+	AckExHeader<W> getAckHeader()
+	{
+		AckExHeader<W> h;
+		h.setRawHeader((ap_uint<AETH_SIZE>) raw(AETH_SIZE-1, 0));
+		return h;
+	}
 	SackExHeader<W> getSackHeader()
 	{
 		SackExHeader<W> h;

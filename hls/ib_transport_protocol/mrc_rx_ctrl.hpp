@@ -2,9 +2,10 @@
  * MRC RX control path
  *
  *                                   +--> data path (rx_strip_mrc_eth, unchanged)
+ *                                   +--> data path (rx_strip_mrc_eth): requests only
  *  rx_process_ibh --> BTH shift --> rx_split_ctrl
- *        |                          +--> rx_process_ctrl --> rx_ctrl_fsm
- *        |                                  ^
+ *        |                          +--> rx_process_ctrl --> rx_ctrl_fsm --> rx_req_fsm (requestor side,
+ *        |                                                                   mrc_rx_req.hpp)
  *        +--- mrcCtrlBthMeta ---------------+
  *        |                                  |
  *  s_axis_rx_meta --> rx_split_udp_meta ----+--> ipUdpMetaHandler (data path, unchanged)
@@ -178,10 +179,13 @@ void rx_process_ctrl(
  * Logic still to be written lives in the TODOs. Whatever outputs the logic needs (retransmitter,
  * CC state, TX event FIFO for SACK/EETH generation, ...) will be added as parameters of this
  * function; this process must keep reading metaIn every cycle so it never backpressures RX.
+ * reqOut is the exception: it is written with a blocking write, and rx_req_fsm needs two
+ * cycles plus a state table round trip per packet, so size its FIFO for ACK bursts. 
  */
 template <int WIDTH, int INSTID = 0>
 void rx_ctrl_fsm(
-	stream<mrcCtrlMeta<WIDTH> >& metaIn
+	stream<mrcCtrlMeta<WIDTH> >& metaIn,
+    stream<mrcCtrlMeta<WIDTH> >& reqOut   // requestor-side packets -> rx_req_fsm
 ) {
 #pragma HLS inline off
 #pragma HLS pipeline II=1
@@ -202,8 +206,15 @@ void rx_ctrl_fsm(
 
 		switch (m.op_code)
 		{
+		case MRC_ACK: // requestor side: transport ACK / NAK
+		{
+			// rx_req_fsm owns the requestor reliability state, nothing is decided here
+			reqOut.write(m);
+			break;
+		}
 		case MRC_SACK: // requestor side (7.4, 7.5.5.5, chapter 8)
 		{
+            // Step C: replace the body with reqOut.write(m) and move these TODOs to rx_req_fsm
 			SackExHeader<WIDTH> h = m.getSackHeader();
 			std::cout << std::hex << "[RX CTRL FSM " << INSTID << "]: SACK qp " << m.dest_qp
 			          << " cack_psn " << h.getCackPsn() << " ack_psn " << h.getAckPsn()
@@ -225,6 +236,7 @@ void rx_ctrl_fsm(
 		}
 		case MRC_NACK: // requestor side (7.5.3, 7.5.5.6, Table 7-3)
 		{
+            // Step C: replace the body with reqOut.write(m) and move these TODOs to rx_req_fsm
 			NackExHeader<WIDTH> h = m.getNackHeader();
 			std::cout << std::hex << "[RX CTRL FSM " << INSTID << "]: NACK qp " << m.dest_qp
 			          << " reason " << h.getNackReason() << " nack_psn " << h.getNackPsn()

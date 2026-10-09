@@ -40,18 +40,7 @@ EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "multi_queue/multi_queue.hpp"
 #include "mrc_headers.hpp"
 #include "mrc_rx_ctrl.hpp"
-
-// Prints one bus word with the stage name and instance: [STAGE 0] 06 00 ff ff ... keep last
-#ifdef DBG_FULL
-#define DBG_WORD(stage, w)                                          \
-	do {                                                            \
-		std::cout << "[" << stage << " " << INSTID << "] ";         \
-		print(std::cout, w);                                        \
-		std::cout << (w.last ? "  <- last" : "") << std::endl;      \
-	} while (0)
-#else
-#define DBG_WORD(stage, w) do {} while (0)
-#endif
+#include "mrc_rx_req.hpp"
 
 // ------------------------------------------------------------------------------------------------
 // RX path
@@ -66,7 +55,7 @@ void rx_process_ibh(
 	stream<psnPkg>& m_axis_dbg,
 #endif
 	stream<net_axis<WIDTH> >& input,
-	stream<ibhMeta>& metaOut,              // data path only (requests + AETH)
+	stream<ibhMeta>& metaOut,              // data path only (requests)
 	stream<mrcEthMeta>& metaOut2,          // data path only
 	stream<mrcCtrlBthMeta>& ctrlMetaOut,   // NEW: control path only
 	stream<bool>& splitDataOut,            // NEW: every packet, true = control
@@ -483,10 +472,6 @@ void rx_ibh_fsm(
 	stream<bool>& ibhDropFifo,
 	stream<fwdPolicy>& ibhDropMetaFifo,
 	//stream<ackMeta>& m_axis_rx_ack_meta,
-#ifdef RETRANS_EN
-	stream<rxTimerUpdate>&	rxClearTimer_req,
-	stream<retransUpdate>&	rx2retrans_upd,
-#endif
 	ap_uint<32>&		regInvalidPsnDropCount
 ) {
 #pragma HLS inline off
@@ -508,7 +493,7 @@ void rx_ibh_fsm(
 		{
 			metaIn.read(meta);
 			exhMetaFifo.read(emeta);
-			isResponse = checkIfResponse(meta.op_code);
+			isResponse = checkIfResponse(meta.op_code); // always false since step B: ACKs go to rx_req_fsm			
 			// this is a read, you write on the FIFO a request
 			// it is a read because it has only two parameters, not three
 			stateTable_upd_req.write(rxStateReq(meta.dest_qp, isResponse));
@@ -540,55 +525,23 @@ void rx_ibh_fsm(
 			// here!
 			// 32 is the window size, it is a magic number for now
 			// 11.1 suggests 32 as a max value
-			if ((qpState.epsn <= meta.psn && meta.psn < qpState.epsn + 32) || meta.op_code == MRC_ACK)
+			if (qpState.epsn <= meta.psn && meta.psn < qpState.epsn + 32)
 			{
-
 				// Forwarding
-				if (meta.op_code != MRC_ACK) //TODO do length check instead
-				{
-					ibhDropFifo.write(false);
-                }
+				ibhDropFifo.write(false);                       // <-- must be here, unconditional
 				ibhDropMetaFifo.write(fwdPolicy(false, false));
 
 				// EXH
 				metaOut.write(meta);
 
 				// Update psn
-				//TODO for last param we need vaddr here!
-				if (!emeta.isNak && (meta.op_code != MRC_ACK || ((qpState.epsn <= meta.psn && meta.psn <= qpState.max_forward)
-					|| ((qpState.epsn <= meta.psn || meta.psn <= qpState.max_forward) && qpState.max_forward < qpState.epsn))))
+				if (!emeta.isNak)
 				{
-					// if the next req is invalid, trigger NAK
-					// it is a write because it three parameters, not only two
 					stateTable_upd_req.write(rxStateReq(meta.dest_qp, meta.psn+emeta.numPkg, isResponse));
 				}
-#ifdef RETRANS_EN
-
-				// Update oldest-unacked-reqeust
-				// read response
-				if (isResponse && !emeta.isNak)
-				{
-					std::cout << std::hex <<"[RX IBH FSM " << INSTID << "]: retrans update, psn " << meta.psn << std::endl;
-
-                    // Retrans table update
-					// the receiver treats the psn as cumulative and throws away everything before it
-					rx2retrans_upd.write(retransUpdate(meta.dest_qp, meta.psn, meta.op_code));
-				}
-				// Check if no oustanding requests -> stop timer
-				if (isResponse)
-				{
-					rxClearTimer_req.write(rxTimerUpdate(meta.dest_qp, meta.psn == qpState.max_forward));
-#ifndef __SYNTHESIS__
-					if (meta.psn  == qpState.max_forward)
-					{
-						std::cout << std::hex << "[RX IBH FSM " << INSTID << "]: clearing transport timer at psn " << meta.psn << std::endl;
-					}
-#endif
-				}
-
-                #ifdef DBG_IBV
-                    m_axis_dbg.write(psnPkg(meta.op_code, meta.psn, qpState.epsn, 1));
-                #endif
+				// Retransmitter release and timer clear moved to rx_req_fsm (mrc_rx_req.hpp)
+#if defined(RETRANS_EN) && defined(DBG_IBV)
+				m_axis_dbg.write(psnPkg(meta.op_code, meta.psn, qpState.epsn, 1));
 #endif
 			}
 			// Check for duplicates
@@ -699,17 +652,10 @@ void rx_exh_fsm(
 	stream<ibhMeta>& metaIn,
 	stream<ap_uint<16> >& udpLengthFifo,
 	stream<dmaState>& msnTable2rxExh_rsp,
-#ifdef RETRANS_EN
-    //stream<rxReadReqUpdate>& readReqTable_upd_req,
-	//stream<rxReadReqRsp>& readReqTable_rsp,
-    stream<retransmission>&	rx2retrans_req,
-    stream<retransRdInit>&  retrans2rx_init,
-#endif
 	//stream<ap_uint<64> >& rx_readReqAddr_pop_rsp,
 	stream<ExHeader<WIDTH> >& headerInput,
 	stream<memCmd>& memoryWriteCmd,
 	stream<readRequest>& readRequestFifo,
-	stream<ackMeta>& m_axis_rx_ack_meta, 
 	stream<rxMsnReq>& rxExh2msnTable_upd_req,
 	//stream<mqPopReq>& rx_readReqAddr_pop_req,
 	stream<ackEvent>& rx_exhEventMetaFifo,
@@ -727,10 +673,7 @@ void rx_exh_fsm(
 	static dmaState dmaMeta;
 	static ap_uint<16> udpLength;
 	ap_uint<32> payLoadLength;
-	static bool consumeReadInit;
 	//static rxReadReqRsp readReqMeta;
-	static retransRdInit readReqInit;
-
 
 	switch (pe_fsmState)
 	{
@@ -740,39 +683,15 @@ void rx_exh_fsm(
 			metaIn.read(meta);
 			headerInput.read(exHeader);
 
-			rxExh2msnTable_upd_req.write(rxMsnReq(meta.dest_qp));
-			consumeReadInit = false;
-
-#ifdef RETRANS_EN // ?
-			/*if (meta.op_code == MRC_ACK)
-			{
-				readReqTable_upd_req.write(rxReadReqUpdate(meta.dest_qp));
-			}*/
-#endif
-			if (meta.op_code == MRC_ACK)
-			{
-				consumeReadInit = true;
-				//rx_readReqAddr_pop_req.write(mqPopReq(meta.dest_qp));
-			}
+			rxExh2msnTable_upd_req.write(rxMsnReq(meta.dest_qp));   // must stay
 			pe_fsmState = DMA_META;
 		}
 		break;
 	case DMA_META:
-		if (!msnTable2rxExh_rsp.empty() && !udpLengthFifo.empty() && (!consumeReadInit || !retrans2rx_init.empty()))
+		if (!msnTable2rxExh_rsp.empty() && !udpLengthFifo.empty())
 		{
-
 			msnTable2rxExh_rsp.read(dmaMeta);
 			udpLengthFifo.read(udpLength);
-#ifdef RETRANS_EN
-			/*if (meta.op_code == MRC_ACK)
-			{
-				readReqTable_rsp.read(readReqMeta);
-			}*/
-#endif
-			if (consumeReadInit)
-			{
-				retrans2rx_init.read(readReqInit);
-			}
 			pe_fsmState = DATA;
 		}
 		break;
@@ -814,39 +733,6 @@ void rx_exh_fsm(
 				rx_exhEventMetaFifo.write(ackEvent(meta.dest_qp, meta.psn, false));
 			rx_pkgSplitTypeFifo.write(pkgSplit(meta.op_code));
 			rx_pkgShiftTypeFifo.write(pkgShift(immPkt ? SHIFT_RETH_IMM : SHIFT_RETH, meta.dest_qp));
-			pe_fsmState = META;
-			break;
-		}
-		case MRC_ACK: // it will be moved to the control path, here is datapath
-		{
-			// [BTH][AETH]
-			AckExHeader<WIDTH> ackHeader = exHeader.getAckHeader();
-
-            m_axis_rx_ack_meta.write(ackMeta(meta.op_code, meta.dest_qp(19,0), readReqInit.host, 
-                    readReqInit.host ? readReqInit.laddr(51,48) : 0, readReqInit.host ? readReqInit.laddr(53,52) : 0,
-                    readReqInit.lst));
-
-			std::cout << "[RX EXH FSM " << INSTID << "]: AETH type " << std::hex << ackHeader.getAckType()
-			          << " value " << ackHeader.getAckValue() << " msn " << ackHeader.getMsn() << std::endl;
-			// TODO MRC (6.2.4, Tables 6-11/6-12): sequence-error NAKs do not exist in MRC. Remaining NAKs
-			//      (getAckValue(): AETH_NAK_INVALID_REQ / REMOTE_ACCESS / REMOTE_OP_ERR) are semantic:
-			//      error completion + QP error (Class B), not retransmission. Retransmission belongs to
-			//      SETH/NETH (rx_ctrl_fsm).
-			// TODO MRC: BTH.psn of an ACK is cack_psn (Table 7-6); completes WRs in posted order (6.2.1)
-			// TODO move AETH to the control path together with the ACK handling in rx_ibh_fsm
-			//      (state table update, rx2retrans_upd, rxClearTimer_req), see the explanation#ifdef RETRANS_EN
-			if (ackHeader.isNAK())
-			{
-				//Trigger retransmit
-				std::cout << "[RX EXH FSM " << INSTID << "]: receive NAK" << std::endl;
-				rx2retrans_req.write(retransmission(meta.dest_qp, meta.psn));
-			}
-			/*else if (readReqMeta.oldest_outstanding_readreq < meta.psn && readReqMeta.valid)
-			{
-				//Trigger retransmit
-				std::cout << "[RX EXH FSM " << INSTID << "]: retranmission triggered, outstanding req " << std::hex << readReqMeta.oldest_outstanding_readreq << std::endl;
-				rx2retrans_req.write(retransmission(meta.dest_qp, readReqMeta.oldest_outstanding_readreq));
-			}*/
 			pe_fsmState = META;
 			break;
 		}
@@ -2240,6 +2126,17 @@ void ib_transport_protocol(
 	static stream<rxStateRsp> stateTable2rxIbh_rsp("stateTable2rxIbh_rsp");
 	static stream<stateTableEntry> stateTable2txIbh_rsp("stateTable2txIbh_rsp");
 	static stream<stateTableEntry> stateTable2qpi_rsp("stateTable2qpi_rsp");
+	static stream<reqStateReq> rxCtrl2stateTable_upd_req("rxCtrl2stateTable_upd_req");
+	static stream<reqStateRsp> stateTable2rxCtrl_rsp("stateTable2rxCtrl_rsp");
+	#pragma HLS STREAM depth=2 variable=rxCtrl2stateTable_upd_req
+	#pragma HLS STREAM depth=2 variable=stateTable2rxCtrl_rsp
+#if defined( __VITIS_HLS__)
+	#pragma HLS aggregate  variable=rxCtrl2stateTable_upd_req compact=bit
+	#pragma HLS aggregate  variable=stateTable2rxCtrl_rsp compact=bit
+#else
+	#pragma HLS DATA_PACK variable=rxCtrl2stateTable_upd_req
+	#pragma HLS DATA_PACK variable=stateTable2rxCtrl_rsp
+#endif
 	#pragma HLS STREAM depth=2 variable=rxIbh2stateTable_upd_req
 	#pragma HLS STREAM depth=2 variable=txIbh2stateTable_upd_req
 	#pragma HLS STREAM depth=2 variable=qpi2stateTable_upd_req
@@ -2391,6 +2288,8 @@ void ib_transport_protocol(
 	static stream<ipUdpMeta>           rx_udpSplit2data_MetaFifo("rx_udpSplit2data_MetaFifo");
 	static stream<ipUdpMeta>           rx_udpSplit2ctrl_MetaFifo("rx_udpSplit2ctrl_MetaFifo");
 	static stream<mrcCtrlMeta<WIDTH> > rx_ctrl2fsm_MetaFifo("rx_ctrl2fsm_MetaFifo");
+	static stream<mrcCtrlMeta<WIDTH> > rx_ctrl2req_MetaFifo("rx_ctrl2req_MetaFifo");
+	static stream<ackCplReq>           rx_req2cpl_Fifo("rx_req2cpl_Fifo");
 	#pragma HLS STREAM depth=4 variable=rx_ibh2ctrl_MetaFifo
 	#pragma HLS STREAM depth=4 variable=rx_ibh2split_Fifo
 	#pragma HLS STREAM depth=4 variable=rx_ibh2udpSplit_Fifo
@@ -2399,6 +2298,8 @@ void ib_transport_protocol(
 	#pragma HLS STREAM depth=8 variable=rx_udpSplit2data_MetaFifo
 	#pragma HLS STREAM depth=4 variable=rx_udpSplit2ctrl_MetaFifo
 	#pragma HLS STREAM depth=2 variable=rx_ctrl2fsm_MetaFifo
+	#pragma HLS STREAM depth=8  variable=rx_ctrl2req_MetaFifo
+	#pragma HLS STREAM depth=16 variable=rx_req2cpl_Fifo
 #if defined( __VITIS_HLS__)
 	#pragma HLS aggregate variable=rx_ibh2ctrl_MetaFifo compact=bit
 	#pragma HLS aggregate variable=rx_udpSplit2data_MetaFifo compact=bit
@@ -2457,13 +2358,34 @@ void ib_transport_protocol(
 
 	rshiftWordByOctet<net_axis<WIDTH>, WIDTH,11, INSTID>(((BTH_SIZE%WIDTH)/8), rx_ibh2shiftFifo, rx_shift2exhFifo);
 
-	// NEW: data / control split
+	// data / control split
 	rx_split_ctrl<WIDTH, INSTID>(rx_shift2exhFifo, rx_ibh2split_Fifo, rx_split2dataFifo, rx_split2ctrlFifo);
 	rx_split_udp_meta<INSTID>(s_axis_rx_meta, rx_ibh2udpSplit_Fifo, rx_udpSplit2data_MetaFifo, rx_udpSplit2ctrl_MetaFifo);
 
-	// NEW: control path
+	// control path
 	rx_process_ctrl<WIDTH, INSTID>(rx_split2ctrlFifo, rx_ibh2ctrl_MetaFifo, rx_udpSplit2ctrl_MetaFifo, rx_ctrl2fsm_MetaFifo);
-	rx_ctrl_fsm<WIDTH, INSTID>(rx_ctrl2fsm_MetaFifo);
+	rx_ctrl_fsm<WIDTH, INSTID>(rx_ctrl2fsm_MetaFifo, rx_ctrl2req_MetaFifo);
+
+	// Requestor side of the control path (mrc_rx_req.hpp)
+	rx_req_fsm<WIDTH, INSTID>(
+		rx_ctrl2req_MetaFifo,
+		stateTable2rxCtrl_rsp,
+		rxCtrl2stateTable_upd_req,
+#ifdef RETRANS_EN
+		rxClearTimer_req,
+		rx2retrans_upd,
+		rx2retrans_req,
+#endif
+		rx_req2cpl_Fifo
+	);
+
+	rx_ack_cpl<INSTID>(
+		rx_req2cpl_Fifo,
+#ifdef RETRANS_EN
+		retrans2rx_init,
+#endif
+		m_axis_rx_ack_meta
+	);
 
 	rx_strip_mrc_eth<WIDTH, INSTID>(
 		rx_split2dataFifo,     // was rx_shift2exhFifo
@@ -2493,10 +2415,6 @@ void ib_transport_protocol(
 		rx_ibhDropFifo,
 		rx_ibhDropMetaFifo,
 		//m_axis_rx_ack_meta,
-#ifdef RETRANS_EN
-		rxClearTimer_req,
-		rx2retrans_upd,
-#endif
 		regInvalidPsnDropCount
 	);
 
@@ -2513,18 +2431,11 @@ void ib_transport_protocol(
 		rx_fsm2exh_MetaFifo,
 		exh_lengthFifo,
 		msnTable2rxExh_rsp,
-#ifdef RETRANS_EN
-		//rx_readReqTable_upd_req,
-        //rx_readReqTable_upd_rsp,
-        rx2retrans_req,
-        retrans2rx_init,
-#endif
 		//rx_readReqAddr_pop_rsp,
 		rx_drop2exhFsm_MetaFifo,
 		//rx_ibhDrop2exhFifo,
 		m_axis_mem_write_cmd,
 		rx_readRequestFifo,
-		m_axis_rx_ack_meta,
 		rxExh2msnTable_upd_req,
 		//rx_readReqAddr_pop_req,
 		rx_exhEventMetaFifo,
@@ -2664,14 +2575,14 @@ void ib_transport_protocol(
 		tx_connTable2ibh_rsp
 	);
 
-	state_table<INSTID>(
-		rxIbh2stateTable_upd_req,
-		txIbh2stateTable_upd_req,
-		qpi2stateTable_upd_req,
-		stateTable2rxIbh_rsp,
-		stateTable2txIbh_rsp,
-		stateTable2qpi_rsp
-	);
+ 	state_table<INSTID>(rxIbh2stateTable_upd_req,
+	                    rxCtrl2stateTable_upd_req,
+ 	                    txIbh2stateTable_upd_req,
+ 	                    qpi2stateTable_upd_req,
+ 	                    stateTable2rxIbh_rsp,
+	                    stateTable2rxCtrl_rsp,
+ 	                    stateTable2txIbh_rsp,
+ 	                    stateTable2qpi_rsp);
 
 	msn_table<INSTID>(
 		rxExh2msnTable_upd_req,
