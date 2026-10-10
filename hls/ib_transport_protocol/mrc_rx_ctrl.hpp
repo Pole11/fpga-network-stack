@@ -206,45 +206,12 @@ void rx_ctrl_fsm(
 
 		switch (m.op_code)
 		{
-		case MRC_ACK: // requestor side: transport ACK / NAK
+		case MRC_ACK:  // transport ACK / NAK   (6.2.4, Table 7-6)
+		case MRC_SACK: // reliability SACK      (7.4, 7.5.5.5)
+		case MRC_NACK: // reliability NACK      (7.5.3, 7.5.5.6, Table 7-3)
 		{
-			// rx_req_fsm owns the requestor reliability state, nothing is decided here
+			// requestor side: rx_req_fsm owns the requestor reliability state
 			reqOut.write(m);
-			break;
-		}
-		case MRC_SACK: // requestor side (7.4, 7.5.5.5, chapter 8)
-		{
-            // Step C: replace the body with reqOut.write(m) and move these TODOs to rx_req_fsm
-			SackExHeader<WIDTH> h = m.getSackHeader();
-			std::cout << std::hex << "[RX CTRL FSM " << INSTID << "]: SACK qp " << m.dest_qp
-			          << " cack_psn " << h.getCackPsn() << " ack_psn " << h.getAckPsn()
-			          << " pr " << h.isProbeResponse() << " m " << h.getMark()
-			          << " sack_base " << h.getSackBasePsn() << " bitmap " << h.getSackBitmap()
-			          << " ooo " << h.getOooCount() << " rcvd_bytes " << h.getRcvdBytes() << std::dec << std::endl;
-			// TODO validate: dest_qp is a valid QP, spdcid == dest_qp[15:0]
-			// TODO pr == 1: probe response, match getProbeId() against the outstanding probe;
-			//      ack_psn_offset is NOT a PSN offset in this case
-			// TODO reliability: everything <= cack_psn and the set bits of sack_bitmap (anchored at
-			//      getSackBasePsn()) are delivered -> release retransmitter entries.
-			//      A SACK must NOT complete WRs (7.2), only the transport ACK does.
-			// TODO fast loss detection / retransmit (6.2.3), rtx bit of the SACK copies the request's
-			// TODO getMark(): path skipping for getEntropy() (9.3.1)
-			// TODO getMpr() != 0: responder bitmap size update (128 * mpr)
-			// TODO CC (only if getCcType() == MRC_CC_TYPE_DEFAULT): RTT from getCcTxTimestamp(),
-			//      ack clock from getRcvdBytes(), getOooCount(), getRcvCwndPenalty() / getRestoreCwnd()
-			break;
-		}
-		case MRC_NACK: // requestor side (7.5.3, 7.5.5.6, Table 7-3)
-		{
-            // Step C: replace the body with reqOut.write(m) and move these TODOs to rx_req_fsm
-			NackExHeader<WIDTH> h = m.getNackHeader();
-			std::cout << std::hex << "[RX CTRL FSM " << INSTID << "]: NACK qp " << m.dest_qp
-			          << " reason " << h.getNackReason() << " nack_psn " << h.getNackPsn()
-			          << " ts " << h.getTxTimestamp() << std::dec << std::endl;
-			// TODO validate: dest_qp is a valid QP, spdcid == dest_qp[15:0]
-			// TODO dispatch on getNackReason() (mrcNackReason), behaviour per Table 7-3:
-			//      retransmit getNackPsn(), retry counter, "Retry Counter Exceeded" -> Class B (Table 6-12)
-			// TODO CC update with getTxTimestamp() (service time, 7.5.5.8)
 			break;
 		}
 		case MRC_PROBE_REQ: // responder side (6.5.1)

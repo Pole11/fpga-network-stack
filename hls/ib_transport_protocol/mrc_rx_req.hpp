@@ -1,60 +1,69 @@
 /************************************************
  * MRC RX requestor path
  *
- * Step B: the transport ACK (AETH, 0xD1) no longer travels on the data path. It is routed by
- * rx_process_ibh to the control path like SACK/NACK, and rx_ctrl_fsm forwards it here.
+ *  rx_ctrl_fsm --(ACK/SACK/NACK)--> rx_req_fsm --(reqErrEvent)----------------+
+ *                                    |    ^                                    v
+ *                        reqStateReq |    | reqStateRsp                   rx_ack_cpl --> m_axis_rx_ack_meta
+ *                                    v    |                                    ^
+ *                                   state_table                                | retrans2rx_init
+ *                                                                              | (one per released entry)
+ *   rx_req_fsm --> rx2retrans_upd   (ACK: release psn <= cack_psn) --> retransmitter
+ *              --> rx2retrans_req   (NACK: resend exactly one psn) --> retransmitter
+ *              --> rxClearTimer_req (restart / stop on progress)   --> transport_timer
  *
- *  rx_ctrl_fsm --(mrcCtrlMeta)--> rx_req_fsm --(ackCplReq)--> rx_ack_cpl --> m_axis_rx_ack_meta
- *                                   |     ^                       ^
- *                       reqStateReq |     | reqStateRsp           | retrans2rx_init
- *                                   v     |                       |
- *                                  state_table               retransmitter
- *                                   
- *                rx_req_fsm also drives: rx2retrans_upd, rx2retrans_req, rxClearTimer_req
+ * Who does what:
+ *   SACK : reliability only. Advances unack_psn (7.4). Never completes WRs (7.2) and never
+ *          releases retransmitter entries, so their completion information stays available.
+ *   ACK  : advances unack_psn like a SACK AND releases every retransmitter entry with
+ *          psn <= cack_psn (BTH.psn, Table 7-6). The retransmitter reports each released entry,
+ *          in posted order, and rx_ack_cpl turns it into an ackMeta: that is the completion.
+ *   NAK  : semantic (Class B, Table 6-12): QP to ERROR, never a retransmission (Table 6-11).
+ *   NACK : retransmit exactly nack_psn (Table 7-3); per-QP retry limit, then QP to ERROR.
  *
- * Step B reproduces exactly what rx_ibh_fsm + rx_exh_fsm did for an ACK (RC semantics), with one
- * fix: a NAK no longer waits for a retrans2rx_init that the retransmitter never sends.
+ * Not yet implemented (TODOs below): SACK bitmap / fast loss detection (6.2.3), mpr send window,
+ * probe-response matching, path marking, congestion control (chapter 8), error completions to
+ * the host (needs a status field in ackMeta), stopping TX on QP error.
  *
- * The three seams step C is built on:
- *   1. rx_ctrl_fsm decides which opcodes reach rx_req_fsm.
- *      C: forward MRC_SACK and MRC_NACK too.
- *   2. rx_req_fsm is the ONLY writer of the requestor reliability state (state_table via
- *      reqStateReq), of the retransmitter release/retransmit requests and of the timer.
- *      C: replace the RC logic in the MRC_ACK case, fill in the MRC_SACK / MRC_NACK cases.
- *   3. rx_ack_cpl is the ONLY producer of completions (m_axis_rx_ack_meta).
- *      C: replace the 1:1 pairing with retrans2rx_init by "complete every WR up to AETH.MSN"
- *         (6.2.1, in posted order) and error completions for semantic NAKs (Table 6-12).
- *
- * Include this file in ib_transport_protocol.cpp right after mrc_rx_ctrl.hpp: it relies on the
- * same headers (state_table.hpp, retransmitter and timer types) being included before it.
+ * Include this file in ib_transport_protocol.cpp right after mrc_rx_ctrl.hpp.
  ************************************************/
 #pragma once
 
 #include "mrc_headers.hpp"
 
 // ------------------------------------------------------------------------------------------------
-// rx_req_fsm -> rx_ack_cpl: "a transport ACK arrived, produce the completion(s) it implies"
-//
-// Step B only uses qpn. The other fields are carried already so that step C can change the
-// completion rule without touching the interface.
+// rx_req_fsm -> rx_ack_cpl: the QP entered the ERROR state
 // ------------------------------------------------------------------------------------------------
-struct ackCplReq
+typedef enum {
+	REQ_ERR_REMOTE_NAK     = 0, // AETH NAK: Invalid Request / Remote Access / Remote Op Error
+	REQ_ERR_REMOTE_OP      = 1, // NACK UNEXP_EVENT ("Remote Operation Error")
+	REQ_ERR_RETRY_EXCEEDED = 2  // NACK retries exhausted ("Retry Counter Exceeded")
+} reqErrType;
+
+struct reqErrEvent
 {
-	ap_uint<24> qpn;
-	ap_uint<24> psn;      // BTH.psn of the ACK. B: RC acked psn. C: cack_psn (Table 7-6)
-	ap_uint<24> msn;      // AETH.MSN. C: complete every outstanding WR with msn <= this (6.2.1)
-	ap_uint<8>  syndrome; // AETH syndrome. C: semantic NAK -> error completion, Class B (Table 6-12)
-	ackCplReq() {}
-	ackCplReq(ap_uint<24> qpn, ap_uint<24> psn, ap_uint<24> msn, ap_uint<8> syn)
-		: qpn(qpn), psn(psn), msn(msn), syndrome(syn) {}
+	ap_uint<16> qpn;
+	ap_uint<24> psn;   // PSN the error refers to
+	ap_uint<8>  code;  // AETH syndrome value or NACK reason
+	ap_uint<2>  type;  // reqErrType
+	reqErrEvent() {}
+	reqErrEvent(ap_uint<16> qpn, ap_uint<24> psn, ap_uint<8> code, reqErrType t)
+		: qpn(qpn), psn(psn), code(code), type(t) {}
 };
 
+// NACK reasons the requestor retries (Table 7-3); everything else is not retriable
+inline bool mrcNackRetriable(ap_uint<8> reason)
+{
+#pragma HLS inline
+	return reason == NACK_TRIMMED   || reason == NACK_TRIMMED_LASTHOP || reason == NACK_NO_BITMAP ||
+	       reason == NACK_NO_PKT_BUFFER || reason == NACK_NO_RESOURCE || reason == NACK_PSN_OOR_WINDOW;
+}
+
 /**
- * Requestor reliability engine.
+ * Requestor reliability engine: the only writer of the requestor state, of retransmitter
+ * release / retransmit requests and of the Local ACK timer.
  *
- * Owns the requestor-side acknowledgement state of every QP. Two-phase like rx_ibh_fsm:
- * LOAD issues the state read, PROCESS consumes it and issues the writes. The read of the next
- * packet goes through the same FIFO as the write of the previous one, so back-to-back ACKs of
+ * LOAD issues the state read, PROCESS decides and writes back at most once. The read of the next
+ * packet goes through the same FIFO as the write of the previous one, so back-to-back packets of
  * the same QP always see the updated state.
  */
 template <int WIDTH, int INSTID = 0>
@@ -67,7 +76,7 @@ void rx_req_fsm(
 	stream<retransUpdate>&       rx2retrans_upd,
 	stream<retransmission>&      rx2retrans_req,
 #endif
-	stream<ackCplReq>&           cplOut
+	stream<reqErrEvent>&         errOut
 ) {
 #pragma HLS inline off
 #pragma HLS pipeline II=1
@@ -76,7 +85,7 @@ void rx_req_fsm(
 	static fsmStateType state = LOAD;
 	static mrcCtrlMeta<WIDTH> m;
 
-	reqStateRsp qpState;
+	reqStateRsp qp;
 
 	switch (state)
 	{
@@ -92,64 +101,167 @@ void rx_req_fsm(
 	case PROCESS:
 		if (!stateTable_rsp.empty())
 		{
-			stateTable_rsp.read(qpState);
+			stateTable_rsp.read(qp);
+
+			ap_uint<16> qpn      = m.dest_qp(15, 0);
+			ap_uint<24> unack    = qp.unack_psn;
+			ap_uint<3>  retries  = qp.retries;
+			bool        error    = qp.error;
+			bool        advanced = false;  // unack_psn moved forward
+			bool        dirty    = false;  // requestor state must be written back
+			bool        hasCack  = false;  // this packet carries a cumulative ack (ACK or SACK)
+			ap_uint<24> cack     = 0;
+
+			// TODO (all opcodes) validate: dest_qp is a valid QP; spdcid == dest_qp[15:0] (SACK/NACK)
 
 			switch (m.op_code)
 			{
 			case MRC_ACK:
 			{
-				// ---------------------------------------------------------------------------------
-				// Step B: RC behaviour, moved verbatim from rx_ibh_fsm (state update, retransmitter
-				// release, timer) and rx_exh_fsm (NAK -> retransmit, completion).
-				//
-				// C replaces this block (see the TODOs in rx_ctrl_fsm and the step C notes):
-				//   - no PSN window check: cack_psn is monotonic, stale ACKs are ignored (modular max)
-				//   - ACK releases the retransmitter up to cack_psn, not "one entry per ACK"
-				//   - NAKs are semantic (Class B), never a retransmission
-				// ---------------------------------------------------------------------------------
 				AckExHeader<WIDTH> aeth = m.getAckHeader();
-				bool isNak = aeth.isNAK();
-
-				std::cout << std::hex << "[RX REQ FSM " << INSTID << "]: AETH qp " << m.dest_qp
+				std::cout << std::hex << "[RX REQ FSM " << INSTID << "]: ACK qp " << m.dest_qp
 				          << " psn " << m.psn << " type " << aeth.getAckType() << " value " << aeth.getAckValue()
-				          << " msn " << aeth.getMsn() << ", unack " << qpState.unack_psn
-				          << " max sent " << qpState.max_psn_sent << std::dec << std::endl;
+				          << " msn " << aeth.getMsn() << ", unack " << unack << " max sent " << qp.max_psn_sent
+				          << std::dec << std::endl;
+				if (error) break;
 
-				// Same expression as the old rx_ibh_fsm: unack_psn <= psn <= max_psn_sent, with wrap
-				bool inWindow = (qpState.unack_psn <= m.psn && m.psn <= qpState.max_psn_sent)
-				             || ((qpState.unack_psn <= m.psn || m.psn <= qpState.max_psn_sent)
-				                 && qpState.max_psn_sent < qpState.unack_psn);
-
-				if (!isNak && inWindow)
+				if (aeth.getAckType() == AETH_ACK)
 				{
-					stateTable_req.write(reqStateReq(m.dest_qp(15, 0), (ap_uint<24>) (m.psn + 1)));
+					// BTH.psn of a transport ACK is the responder's cack_psn (Table 7-6).
+					// AETH.MSN is only logged: completion is decided by PSN, which does not depend
+					// on the peer's MSN bookkeeping. The credit field is always 0x1F in MRC (6.4).
+					cack    = m.psn;
+					hasCack = true;
 				}
-#ifdef RETRANS_EN
-				if (!isNak)
+				else if (aeth.getAckType() == AETH_NAK)
 				{
-					// the retransmitter treats the psn as cumulative and answers with retrans2rx_init
-					rx2retrans_upd.write(retransUpdate(m.dest_qp, m.psn, MRC_ACK));
-					cplOut.write(ackCplReq(m.dest_qp, m.psn, aeth.getMsn(), aeth.getSyndrome()));
+					// Class B (Table 6-12): no retransmission, the QP goes to ERROR
+					std::cout << std::hex << "[RX REQ FSM " << INSTID << "]: NAK code " << aeth.getAckValue()
+					          << " on qp " << m.dest_qp << " -> QP error" << std::dec << std::endl;
+					errOut.write(reqErrEvent(qpn, m.psn, aeth.getAckValue(), REQ_ERR_REMOTE_NAK));
+					error = true;
+					dirty = true;
 				}
 				else
 				{
-					// RC behaviour kept for step B. Wrong for MRC (Table 6-11), removed in C.
-					rx2retrans_req.write(retransmission(m.dest_qp, m.psn));
+					// RNR NAK and reserved: not applicable in MRC (Table 6-11)
+					std::cout << "[RX REQ FSM " << INSTID << "]: RNR/reserved AETH type, ignored" << std::endl;
 				}
-				rxClearTimer_req.write(rxTimerUpdate(m.dest_qp, m.psn == qpState.max_psn_sent));
-#else
-				if (!isNak)
-				{
-					cplOut.write(ackCplReq(m.dest_qp, m.psn, aeth.getMsn(), aeth.getSyndrome()));
-				}
-#endif
 				break;
 			}
-			// C: case MRC_SACK, case MRC_NACK (moved here from rx_ctrl_fsm)
+			case MRC_SACK:
+			{
+				SackExHeader<WIDTH> h = m.getSackHeader();
+				std::cout << std::hex << "[RX REQ FSM " << INSTID << "]: SACK qp " << m.dest_qp
+				          << " cack_psn " << h.getCackPsn() << " ack_psn " << h.getAckPsn()
+				          << " pr " << h.isProbeResponse() << " m " << h.getMark()
+				          << " sack_base " << h.getSackBasePsn() << " bitmap " << h.getSackBitmap()
+				          << " ooo " << h.getOooCount() << " rcvd_bytes " << h.getRcvdBytes()
+				          << ", unack " << unack << " max sent " << qp.max_psn_sent << std::dec << std::endl;
+				if (error) break;
+
+				// SETH.cack_psn (BTH.psn is reserved in probe responses, 7.4.6)
+				cack    = h.getCackPsn();
+				hasCack = true;
+
+				// TODO pr == 1: probe response, match getProbeId() against the outstanding probe
+				//      (ack_psn_offset is NOT a PSN offset then)
+				// TODO fast loss detection from sack_bitmap anchored at getSackBasePsn() (6.2.3, 7.4.5)
+				// TODO getMark(): path skipping for getEntropy() (9.3.1)
+				// TODO getMpr() != 0: max_psn_range = 128 * mpr, limits TX (7.4.4)
+				// TODO CC OnACK() if getCcType() == MRC_CC_TYPE_DEFAULT (8.4)
+				break;
+			}
+			case MRC_NACK:
+			{
+				NackExHeader<WIDTH> h = m.getNackHeader();
+				ap_uint<24> npsn   = h.getNackPsn();
+				ap_uint<8>  reason = h.getNackReason();
+				std::cout << std::hex << "[RX REQ FSM " << INSTID << "]: NACK qp " << m.dest_qp
+				          << " reason " << reason << " nack_psn " << npsn << " ts " << h.getTxTimestamp()
+				          << ", unack " << unack << " max sent " << qp.max_psn_sent
+				          << " retries " << retries << std::dec << std::endl;
+				if (error) break;
+
+				// TODO CC OnNACK() with getTxTimestamp() (8.5)
+				if (!(mrcPsnLE(unack, npsn) && mrcPsnLE(npsn, qp.max_psn_sent)))
+				{
+					std::cout << "[RX REQ FSM " << INSTID << "]: NACK psn not outstanding "
+					          << "(already acknowledged or never sent), ignored" << std::endl;
+				}
+				else if (reason == NACK_UNEXP_EVENT)
+				{
+					errOut.write(reqErrEvent(qpn, npsn, reason, REQ_ERR_REMOTE_OP));
+					error = true;
+					dirty = true;
+				}
+				else if (mrcNackRetriable(reason))
+				{
+					if (retries == MRC_REQ_MAX_RETRIES)
+					{
+						errOut.write(reqErrEvent(qpn, npsn, reason, REQ_ERR_RETRY_EXCEEDED));
+						error = true;
+					}
+					else
+					{
+						retries++;
+#ifdef RETRANS_EN
+						rx2retrans_req.write(retransmission(qpn, npsn, true));
+#endif
+					}
+					dirty = true;
+				}
+				else
+				{
+					std::cout << "[RX REQ FSM " << INSTID << "]: unknown NACK reason, ignored" << std::endl;
+				}
+				break;
+			}
 			default:
 				break;
 			}
 
+			if (hasCack)
+			{
+				if (!mrcPsnLE(cack, qp.max_psn_sent))
+				{
+					std::cout << std::hex << "[RX REQ FSM " << INSTID << "]: cack_psn " << cack
+					          << " acknowledges a PSN never sent, ignored" << std::dec << std::endl;
+				}
+				else
+				{
+					if (mrcPsnLE(unack, cack))   // cack_psn + 1 is after unack_psn: progress
+					{
+						unack    = cack + 1;
+						retries  = 0;
+						advanced = true;
+						dirty    = true;
+					}
+#ifdef RETRANS_EN
+					// Only the transport ACK releases and completes (7.2). Sent even without progress:
+					// a SACK may already have moved unack_psn past this cack_psn. A stale ACK releases
+					// nothing, the retransmitter compares modulo 2^24.
+					if (m.op_code == MRC_ACK)
+						rx2retrans_upd.write(retransUpdate(qpn, cack, MRC_ACK));
+#endif
+				}
+			}
+
+			if (dirty)
+				stateTable_req.write(reqStateReq(qpn, unack, retries, error));
+
+#ifdef RETRANS_EN
+			if (advanced)
+			{
+				// everything sent is acknowledged -> stop, otherwise restart (7.2)
+				bool allAcked = (unack == (ap_uint<24>) (qp.max_psn_sent + 1));
+				rxClearTimer_req.write(rxTimerUpdate(qpn, allAcked));
+			}
+			else if (error && !qp.error)
+			{
+				rxClearTimer_req.write(rxTimerUpdate(qpn, true));   // QP just entered ERROR
+			}
+#endif
 			state = LOAD;
 		}
 		break;
@@ -157,46 +269,48 @@ void rx_req_fsm(
 }
 
 /**
- * Completion generation for transport ACKs.
+ * Completions for the host.
  *
- * Step B: one completion per non-NAK ACK, built from the retransmitter entry the ACK released
- * (same pairing rx_exh_fsm did). Isolated in its own process so that waiting for the
- * retransmitter can never stall rx_req_fsm, and never the data path.
+ * Every retransmitter entry released by a transport ACK becomes one ackMeta, in posted order,
+ * carrying that packet's lst: the same stream the host received before, now driven by cumulative
+ * ACKs. Kept in its own process so a slow host interface never stalls rx_req_fsm.
  */
 template <int INSTID = 0>
 void rx_ack_cpl(
-	stream<ackCplReq>&     cplIn,
 #ifdef RETRANS_EN
 	stream<retransRdInit>& retrans2rx_init,
 #endif
+	stream<reqErrEvent>&   errIn,
 	stream<ackMeta>&       m_axis_rx_ack_meta
 ) {
 #pragma HLS inline off
 #pragma HLS pipeline II=1
 
-	ackCplReq req;
+	bool done = false;
 
 #ifdef RETRANS_EN
-	retransRdInit init;
-
-	if (!cplIn.empty() && !retrans2rx_init.empty())
+	if (!retrans2rx_init.empty())
 	{
-		cplIn.read(req);
+		retransRdInit init;
 		retrans2rx_init.read(init);
 
 		ap_uint<4> dst  = init.host ? (ap_uint<4>) init.laddr(51, 48) : (ap_uint<4>) 0;
 		ap_uint<2> strm = init.host ? (ap_uint<2>) init.laddr(53, 52) : (ap_uint<2>) 0;
-		m_axis_rx_ack_meta.write(ackMeta(MRC_ACK, req.qpn(15, 0), init.host, dst, strm, init.lst));
+		m_axis_rx_ack_meta.write(ackMeta(MRC_ACK, init.qpn, init.host, dst, strm, init.lst));
 
-		std::cout << std::hex << "[RX ACK CPL " << INSTID << "]: completion qp " << req.qpn
-		          << " lst " << init.lst << std::dec << std::endl;
-	}
-#else
-	// Without the retransmitter there is no per-WR information to complete with
-	if (!cplIn.empty())
-	{
-		cplIn.read(req);
-		m_axis_rx_ack_meta.write(ackMeta(MRC_ACK, req.qpn(15, 0), 0, 0, 0, 1));
+		std::cout << std::hex << "[RX ACK CPL " << INSTID << "]: completion qp " << init.qpn
+		          << " psn " << init.psn << " lst " << init.lst << std::dec << std::endl;
+		done = true;
 	}
 #endif
+
+	if (!done && !errIn.empty())
+	{
+		reqErrEvent err;
+		errIn.read(err);
+		std::cout << std::hex << "[RX ACK CPL " << INSTID << "]: QP " << err.qpn << " in ERROR, type "
+		          << err.type << " code " << err.code << " psn " << err.psn << std::dec << std::endl;
+		// TODO error completion to the host: needs a status field in ackMeta (top-level interface)
+		// TODO flush outstanding WRs of this QP with "flushed in error" status
+	}
 }

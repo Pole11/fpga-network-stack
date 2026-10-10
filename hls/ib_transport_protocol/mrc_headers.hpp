@@ -70,6 +70,9 @@ typedef enum {
 const ap_uint<4>  MRC_CC_TYPE_DEFAULT = 0x0; // CC_STATE layout of Table 7-12
 const ap_uint<4>  MRC_FTYPE_TS        = 0x1; // ftype when tx_timestamp is carried
 const ap_uint<24> MRC_EV_PROBE_DQP    = 0x2; // BTH.dqp of EV probes (Table 7-6)
+// Requestor NACK retry limit (Table 7-3: "If max retries reached, QP enters Error state").
+// Per QP, reset whenever unack_psn advances.
+const ap_uint<3> MRC_REQ_MAX_RETRIES = 7;
 
 // Bytes each control header occupies on the wire (0 = not a control opcode)
 inline ap_uint<6> mrcCtrlHeaderBytes(mrcOpCode op)

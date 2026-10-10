@@ -122,6 +122,24 @@ bool checkIfMrcRequest(mrcOpCode code);
 bool checkIfMrcCtrl(mrcOpCode code);
 bool checkIfImmDt(mrcOpCode code);
 
+// ------------------------------------------------------------------------------------------------
+// 24-bit PSN serial-number arithmetic (PSNs wrap at 2^24).
+// a is at or before b when b - a (mod 2^24) < 2^23; anything further away counts as "after".
+// these are wrap safe comparisons
+// ------------------------------------------------------------------------------------------------
+inline bool mrcPsnLE(ap_uint<24> a, ap_uint<24> b) 
+{
+#pragma HLS inline
+	ap_uint<24> d = b - a;   // truncation to 24 bits = modular difference
+	return d < 0x800000;
+}
+
+inline bool mrcPsnLT(ap_uint<24> a, ap_uint<24> b)
+{
+#pragma HLS inline
+	return (a != b) && mrcPsnLE(a, b);
+}
+
 /* QP context */
 struct qpContext
 {

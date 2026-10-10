@@ -42,7 +42,11 @@ struct stateTableEntry
 	ap_uint<24> req_next_psn;
 	ap_uint<24> req_old_unack;
 	ap_uint<24> req_old_valid; //required? can be computed?
-	ap_uint<3>	retryCounter;
+
+	ap_uint<3>	retryCounter;   // responder: RC NAK logic in rx_ibh_fsm
+	// requestor reliability state, written only by rx_req_fsm (and qp_interface at setup)
+	ap_uint<3>  req_retries;    // NACK retries since req_old_unack last advanced
+	bool        req_error;      // QP in ERROR on the requestor side (Class B)
 };
 
 struct ifStateReq
@@ -81,32 +85,37 @@ struct rxStateReq
 // ------------------------------------------------------------------------------------------------
 // Requestor reliability state: rx_req_fsm (MRC control path) <-> state_table
 //
-// rx_req_fsm is the ONLY writer of the requestor acknowledgement state (qp_interface only
-// initialises it). Step B keeps RC semantics:
-//   unack_psn    = oldest unacknowledged PSN (last acked + 1), stored in req_old_unack
+// rx_req_fsm is the ONLY writer (qp_interface only initialises it).
+//   unack_psn    = oldest unacknowledged PSN = last cumulatively acknowledged PSN + 1
+//                  (left edge of the retransmission window, Table 7-4), stored in req_old_unack.
+//                  Advanced by the cack_psn of SACKs and transport ACKs.
 //   max_psn_sent = req_next_psn - 1 (req_next_psn is written by TX)
-// Step C turns this pair into the Table 7-4 state (and may move it into its own table): only these
-// two structs, the state_table branch below and rx_req_fsm change.
+//   retries      = NACK retries since unack_psn last advanced (Table 7-3)
+//   error        = QP in ERROR on the requestor side (Class B, Table 6-12)
 // ------------------------------------------------------------------------------------------------
 struct reqStateReq
 {
 	ap_uint<16> qpn;
 	ap_uint<24> unack_psn;
+	ap_uint<3>  retries;
+	bool        error;
 	bool        write;
 	reqStateReq() : write(false) {}
 	reqStateReq(ap_uint<16> qpn)
-		: qpn(qpn), unack_psn(0), write(false) {}
-	reqStateReq(ap_uint<16> qpn, ap_uint<24> unack)
-		: qpn(qpn), unack_psn(unack), write(true) {}
+		: qpn(qpn), unack_psn(0), retries(0), error(false), write(false) {}
+	reqStateReq(ap_uint<16> qpn, ap_uint<24> unack, ap_uint<3> retries, bool error)
+		: qpn(qpn), unack_psn(unack), retries(retries), error(error), write(true) {}
 };
 
 struct reqStateRsp
 {
 	ap_uint<24> unack_psn;
 	ap_uint<24> max_psn_sent;
+	ap_uint<3>  retries;
+	bool        error;
 	reqStateRsp() {}
-	reqStateRsp(ap_uint<24> unack, ap_uint<24> maxSent)
-		: unack_psn(unack), max_psn_sent(maxSent) {}
+	reqStateRsp(ap_uint<24> unack, ap_uint<24> maxSent, ap_uint<3> retries, bool error)
+		: unack_psn(unack), max_psn_sent(maxSent), retries(retries), error(error) {}
 };
 
 struct rxStateRsp
@@ -214,11 +223,14 @@ void state_table(
 		if (ctrlRequest.write)
 		{
 			state_table[ctrlRequest.qpn].req_old_unack = ctrlRequest.unack_psn;
+			state_table[ctrlRequest.qpn].req_retries   = ctrlRequest.retries;
+			state_table[ctrlRequest.qpn].req_error     = ctrlRequest.error;
 		}
 		else
 		{
 			stateTableEntry entry = state_table[ctrlRequest.qpn];
-			stateTable2rxCtrl_rsp.write(reqStateRsp(entry.req_old_unack, entry.req_next_psn - 1));
+			stateTable2rxCtrl_rsp.write(reqStateRsp(entry.req_old_unack, entry.req_next_psn - 1,
+			                                        entry.req_retries, entry.req_error));
 		}
 	}
 	else if (!txIbh2stateTable_upd_req.empty())
@@ -247,11 +259,15 @@ void state_table(
 				state_table[ifRequest.qpn].req_next_psn = ifRequest.remote_psn;
 				state_table[ifRequest.qpn].req_old_unack = ifRequest.remote_psn;
 				state_table[ifRequest.qpn].req_old_valid = ifRequest.remote_psn;
+				state_table[ifRequest.qpn].req_retries = 0;
+				state_table[ifRequest.qpn].req_error   = false;
 				state_table[ifRequest.qpn].retryCounter = 0xF;
 			} else {
 				state_table[ifRequest.qpn].req_next_psn = ifRequest.remote_psn;
 				state_table[ifRequest.qpn].req_old_unack = ifRequest.remote_psn;
 				state_table[ifRequest.qpn].req_old_valid = ifRequest.remote_psn;
+				state_table[ifRequest.qpn].req_retries = 0;
+				state_table[ifRequest.qpn].req_error   = false;
 			}
 			//state_table[ifRequest.qpn].sendNAK = false;
 

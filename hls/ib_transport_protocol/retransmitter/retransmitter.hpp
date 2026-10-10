@@ -39,33 +39,38 @@ struct retransEvent;
 struct retransUpdate
 {
 	ap_uint<16> qpn;
-	ap_uint<24> latest_acked_req; //TODO rename?
+	ap_uint<24> latest_acked_req; // cack_psn: release every entry with psn <= this
     mrcOpCode op_code;
 	retransUpdate() {}
 	retransUpdate(ap_uint<16> qpn, ap_uint<24> psn, mrcOpCode op_code)
 		:qpn(qpn), latest_acked_req(psn), op_code(op_code) {}
 };
 
+// retransmitter -> rx_ack_cpl: one entry released by a transport ACK, in posted order
 struct retransRdInit
 {
-    ap_uint<64> laddr;
-    ap_uint<1>  lst;
-    ap_uint<1>  host;
-    retransRdInit() {}
-    retransRdInit(ap_uint<64> laddr, ap_uint<1> lst, ap_uint<1> host)
-        :laddr(laddr), lst(lst), host(host) {}
+	ap_uint<16> qpn;
+	ap_uint<24> psn;
+	ap_uint<64> laddr;
+	ap_uint<1>  lst;
+	ap_uint<1>  host;
+	retransRdInit() {}
+	retransRdInit(ap_uint<16> qpn, ap_uint<24> psn, ap_uint<64> laddr, ap_uint<1> lst, ap_uint<1> host)
+		:qpn(qpn), psn(psn), laddr(laddr), lst(lst), host(host) {}
 };
 
 struct retransmission
 {
 	ap_uint<16> qpn;
 	ap_uint<24> psn;
-	//bool		implicit; //TODO or remove
-	retransmission() {}
+	bool        single; // true: resend only psn (MRC NACK); false: go-back-N from psn (timer)
+	retransmission() : single(false) {}
 	retransmission(ap_uint<16> qpn)
-		:qpn(qpn), psn(0) {}
+		:qpn(qpn), psn(0), single(false) {}
 	retransmission(ap_uint<16> qpn, ap_uint<24> psn)
-		:qpn(qpn), psn(psn) {}
+		:qpn(qpn), psn(psn), single(false) {}
+	retransmission(ap_uint<16> qpn, ap_uint<24> psn, bool single)
+		:qpn(qpn), psn(psn), single(single) {}
 };
 
 struct retransMeta
@@ -404,37 +409,32 @@ void process_retransmissions(
 		}
 		break;
 	case UPDATE_1:
+		// Release every entry with psn <= cack_psn, reporting each one (posted order) as a completion
 		if (!metaRspFifo.empty())
 		{
 			metaRspFifo.read(meta);
 
-            if(!meta.valid) {
-                // Invalid state
-                std::cout << "[PROCESS RETRANSMISSION " << INSTID << "]: state UPDATE_1 invalid state" << std::endl;
-                break;
-            } else {
-                // Address forwarding
-                if(update.op_code == MRC_ACK) 
-                {
-                    retrans2rx_init.write(retransRdInit(meta.localAddr, meta.lst, meta.host));
+			if (meta.valid && mrcPsnLE(meta.psn, update.latest_acked_req))
+			{
+				retrans2rx_init.write(retransRdInit(update.qpn, meta.psn, meta.localAddr, meta.lst, meta.host));
+				std::cout << std::hex << "[PROCESS RETRANSMISSION " << INSTID << "]: released psn " << meta.psn
+				          << " (cack " << update.latest_acked_req << "), last " << meta.lst << std::dec << std::endl;
 
-                    std::cout << "[PROCESS RETRANSMISSION " << INSTID << "]: state UPDATE_1 forwarding local address, laddr " << meta.localAddr << ", last" << meta.lst << std::endl;
-                }
-				// Move index
-				ptrMeta.head = meta.next;
-				ptrMeta.valid = !meta.isTail;
-
-				// Clear free list
 				releaseFifo.write(curr);
-				curr = meta.next;
+				ptrMeta.head  = meta.next;
+				ptrMeta.valid = !meta.isTail;
+				curr          = meta.next;
 
-				std::cout << "[PROCESS RETRANSMISSION " << INSTID << "]: state UPDATE_1 ack update, psn " << meta.psn << std::endl;
-            }
-
-            // update the lock
-            pointerUpdFifo.write(pointerUpdate(update.qpn, ptrMeta));
-            // return to main
-            rt_state = MAIN;
+				if (!meta.isTail)
+				{
+					// next entry may be covered too: keep the lock and stay in UPDATE_1
+					metaReqFifo.write(retransMetaReq(meta.next));
+					break;
+				}
+			}
+			// first entry beyond cack_psn, end of list, or invalid entry: write back and unlock
+			pointerUpdFifo.write(pointerUpdate(update.qpn, ptrMeta));
+			rt_state = MAIN;
 		}
 		break;
 	case RETRANS_0:
@@ -453,40 +453,33 @@ void process_retransmissions(
 		}
 		break;
 	case RETRANS_1:
-		// loop until we get the psn "head" for retransmission
+		// walk the list until the requested psn
 		if (!metaRspFifo.empty())
 		{
 			metaRspFifo.read(meta);
 			rt_state = MAIN;
 			if (meta.valid)
 			{
-				if (meta.isTail)
-				{
-					// this should ideally not happen
-					// requested retransmission psn not stored
-					std::cout << "[PROCESS RETRANSMISSION " << INSTID << "]: state RETRANS_1 trying to retransmit psn that is ACKed" << std::endl;
-					rt_state = MAIN;
-				}
-				else
-				{
-					// traversing the list
-					metaReqFifo.write(retransMetaReq(meta.next));
-				}
-
-				// check if we should start retransmitting
 				if (meta.psn == retrans.psn)
 				{
-					std::cout << std::hex << "[PROCESS RETRANSMISSION " << INSTID << "]: retransmitting psn " << meta.psn << std::endl;
+					std::cout << std::hex << "[PROCESS RETRANSMISSION " << INSTID << "]: retransmitting psn " << meta.psn
+					          << (retrans.single ? " (single)" : "") << std::dec << std::endl;
 					retrans2event.write(retransEvent(meta.opCode, retrans.qpn, meta.localAddr, meta.remoteAddr, meta.length, meta.psn, meta.lst, meta.offs));
-					if (!meta.isTail)
+					if (!retrans.single && !meta.isTail)
 					{
-						rt_state = RETRANS_2;
+						metaReqFifo.write(retransMetaReq(meta.next));
+						rt_state = RETRANS_2;   // go-back-N: everything up to the tail
 					}
+				}
+				else if (!meta.isTail)
+				{
+					metaReqFifo.write(retransMetaReq(meta.next));
+					rt_state = RETRANS_1;
 				}
 				else
 				{
-					// keep traversing
-					rt_state = RETRANS_1;
+					std::cout << std::hex << "[PROCESS RETRANSMISSION " << INSTID << "]: psn " << retrans.psn
+					          << " not in the list (already acknowledged), nothing to retransmit" << std::dec << std::endl;
 				}
 			}
 		}

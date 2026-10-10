@@ -2289,7 +2289,13 @@ void ib_transport_protocol(
 	static stream<ipUdpMeta>           rx_udpSplit2ctrl_MetaFifo("rx_udpSplit2ctrl_MetaFifo");
 	static stream<mrcCtrlMeta<WIDTH> > rx_ctrl2fsm_MetaFifo("rx_ctrl2fsm_MetaFifo");
 	static stream<mrcCtrlMeta<WIDTH> > rx_ctrl2req_MetaFifo("rx_ctrl2req_MetaFifo");
-	static stream<ackCplReq>           rx_req2cpl_Fifo("rx_req2cpl_Fifo");
+	static stream<reqErrEvent> 			rx_req2err_Fifo("rx_req2err_Fifo");
+	#pragma HLS STREAM depth=4 variable=rx_req2err_Fifo
+#if defined( __VITIS_HLS__)
+	#pragma HLS aggregate variable=rx_req2err_Fifo compact=bit
+#else
+	#pragma HLS DATA_PACK variable=rx_req2err_Fifo
+#endif
 	#pragma HLS STREAM depth=4 variable=rx_ibh2ctrl_MetaFifo
 	#pragma HLS STREAM depth=4 variable=rx_ibh2split_Fifo
 	#pragma HLS STREAM depth=4 variable=rx_ibh2udpSplit_Fifo
@@ -2376,14 +2382,14 @@ void ib_transport_protocol(
 		rx2retrans_upd,
 		rx2retrans_req,
 #endif
-		rx_req2cpl_Fifo
+		rx_req2err_Fifo
 	);
 
 	rx_ack_cpl<INSTID>(
-		rx_req2cpl_Fifo,
 #ifdef RETRANS_EN
 		retrans2rx_init,
 #endif
+		rx_req2err_Fifo,
 		m_axis_rx_ack_meta
 	);
 
