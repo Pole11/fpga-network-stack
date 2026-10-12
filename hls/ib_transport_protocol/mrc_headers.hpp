@@ -270,9 +270,9 @@ struct mrcCtrlBthMeta
 {
 	mrcOpCode   op_code;
 	ap_uint<16> partition_key;
-	ap_uint<24> dest_qp;
-	ap_uint<24> psn;
-	bool        ackReq;
+	ap_uint<24> dest_qp; // column qpn
+	ap_uint<24> psn; 
+	bool        ackReq; 
 	bool        rtx;
 	mrcCtrlBthMeta() : op_code(MRC_SACK), ackReq(false), rtx(false) {}
 	mrcCtrlBthMeta(mrcOpCode op, ap_uint<16> key, ap_uint<24> qp, ap_uint<24> psn, bool a, bool rtx)

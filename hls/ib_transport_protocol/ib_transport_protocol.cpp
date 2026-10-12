@@ -55,12 +55,12 @@ void rx_process_ibh(
 	stream<psnPkg>& m_axis_dbg,
 #endif
 	stream<net_axis<WIDTH> >& input,
-	stream<ibhMeta>& metaOut,              // data path only (requests)
-	stream<mrcEthMeta>& metaOut2,          // data path only
-	stream<mrcCtrlBthMeta>& ctrlMetaOut,   // NEW: control path only
-	stream<bool>& splitDataOut,            // NEW: every packet, true = control
-	stream<bool>& splitUdpOut,             // NEW: every packet, true = control
-	stream<net_axis<WIDTH> >& output,
+	stream<ibhMeta>& metaToIbhFsmOut,              	// data path only (requests)
+	stream<mrcEthMeta>& metaToStripCtrlOut,        	// data path only, you only need to know if it has METH and TSETH
+	stream<mrcCtrlBthMeta>& metaToProcCtrlOut,   	// control path only, you must have all the possible information of BTH needed for ctrl
+	stream<bool>& isCtrlDataOut,            // every packet, true = control
+	stream<bool>& isCtrlUdpOut,             // every packet, true = control
+	stream<net_axis<WIDTH> >& forwardInputOut,
 	ap_uint<32>&		regIbvCountRx
 ) {
 #pragma HLS inline off
@@ -77,27 +77,27 @@ void rx_process_ibh(
 		bth.parseWord(currWord.data);
 
 		if (bth.isReady()) {
-			output.write(currWord);
+			forwardInputOut.write(currWord);
 			
 			if (!metaWritten) {
 				mrcOpCode opCode = bth.getOpCode();
 				bool isCtrl = checkIfMrcCtrl(opCode);
 				std::cout << "[RX PROCESS IBH " << INSTID << "]: input psn " << std::hex << bth.getPsn() << std::endl;
 
-				splitDataOut.write(isCtrl);
-				splitUdpOut.write(isCtrl);
+				isCtrlDataOut.write(isCtrl);
+				isCtrlUdpOut.write(isCtrl);
 				if (isCtrl)
 				{
 					// SACK/NACK/PROBE/EP: dqp and psn have an opcode-dependent meaning (Table 7-6),
 					// these packets never go through the RC PSN checks of rx_ibh_fsm
-					ctrlMetaOut.write(mrcCtrlBthMeta(opCode, bth.getPartitionKey(), bth.getDstQP(), bth.getPsn(),
+					metaToProcCtrlOut.write(mrcCtrlBthMeta(opCode, bth.getPartitionKey(), bth.getDstQP(), bth.getPsn(),
 					                                 bth.getAckReq(), bth.getRtx()));
 				}
 				else
 				{
 					ibhMeta m(opCode, bth.getPartitionKey(), bth.getDstQP(), bth.getPsn(), true, bth.getAckReq(), bth.getRtx(), bth.getTs());
-					metaOut.write(m);
-					metaOut2.write(mrcEthMeta(opCode, bth.getTs()));
+					metaToIbhFsmOut.write(m);
+					metaToStripCtrlOut.write(mrcEthMeta(opCode, bth.getTs()));
 				}
 				metaWritten = true;
 
@@ -296,16 +296,16 @@ void rx_strip_mrc_eth(
  */
 template <int WIDTH, int INSTID = 0>
 void rx_process_exh(
-	stream<net_axis<WIDTH> >& input,
+	stream<net_axis<WIDTH> >& input, // packet without BTH, without METH and without TSETH, it starts with RETH
 	stream<exhOpMeta>& metaIn,
-	stream<exhMeta>& exhMetaFifo,
+	stream<exhMeta>& exhMetaFifo, // the isNak parameter must be removed
 	stream<ExHeader<WIDTH> >& metaOut,
 	stream<net_axis<WIDTH> >& output
 ) {
 #pragma HLS inline off
 #pragma HLS pipeline II=1
 
-	enum fsmStateType {META, ACK_HEADER, RETH_HEADER, NO_HEADER};
+	enum fsmStateType {META, RETH_HEADER, NO_HEADER};
 
 	static fsmStateType state = META;
 
@@ -332,43 +332,13 @@ void rx_process_exh(
 			rethParsed  = false;
 			hasImmDt    = checkIfImmDt(opCode);
 
-			if (checkIfAethHeader(opCode))
-			{
-				state = ACK_HEADER;
-			}
-			else if (checkIfRethHeader(opCode))
+			if (checkIfRethHeader(opCode))
 			{
 				state = RETH_HEADER;
 			}
 			else
 			{
 				state = NO_HEADER;
-			}
-		}
-		break;
-	case ACK_HEADER:
-		if (!input.empty())
-		{
-			input.read(currWord);
-			ackHeader.parseWord(currWord.data);
-
-			if (ackHeader.isReady())
-			{
-				if (opCode != MRC_ACK)
-				{
-					output.write(currWord);
-				}
-				if (!metaWritten)
-				{
-					exhMetaFifo.write(exhMeta(ackHeader.isNAK()));
-					metaOut.write(ExHeader<WIDTH>(ackHeader));
-					metaWritten = true;
-				}
-			}
-			if (currWord.last)
-			{
-				ackHeader.clear();
-				state = META;
 			}
 		}
 		break;
@@ -396,7 +366,7 @@ void rx_process_exh(
 			// non-IMM: same word as before. IMM: wait for the ImmDt (or the end of a malformed packet)
 			if (!metaWritten && rdmaHeader.isReady() && (!hasImmDt || rethImmHeader.isReady() || currWord.last))
 			{
-				exhMetaFifo.write(exhMeta(false));
+				exhMetaFifo.write(exhMeta()); 
 
 				ExHeader<WIDTH> exh(rdmaHeader);
 				exh.mrc = opMeta.mrc;
@@ -429,7 +399,7 @@ void rx_process_exh(
 			output.write(currWord);
 			if (!metaWritten)
 			{
-				exhMetaFifo.write(exhMeta(false));
+				exhMetaFifo.write(exhMeta()); 
 				metaOut.write(ExHeader<WIDTH>());
 				metaWritten = true;
 			}
@@ -535,10 +505,7 @@ void rx_ibh_fsm(
 				metaOut.write(meta);
 
 				// Update psn
-				if (!emeta.isNak)
-				{
-					stateTable_upd_req.write(rxStateReq(meta.dest_qp, meta.psn+emeta.numPkg, isResponse));
-				}
+				stateTable_upd_req.write(rxStateReq(meta.dest_qp, meta.psn+emeta.numPkg, isResponse));
 				// Retransmitter release and timer clear moved to rx_req_fsm (mrc_rx_req.hpp)
 #if defined(RETRANS_EN) && defined(DBG_IBV)
 				m_axis_dbg.write(psnPkg(meta.op_code, meta.psn, qpState.epsn, 1));
@@ -701,7 +668,7 @@ void rx_exh_fsm(
         #endif
 
 		switch(meta.op_code) {
-				case MRC_RDMA_WRITE_FIRST:
+		case MRC_RDMA_WRITE_FIRST:
 		case MRC_RDMA_WRITE_MIDDLE:
 		case MRC_RDMA_WRITE_LAST:
 		case MRC_RDMA_WRITE_ONLY:
@@ -728,9 +695,9 @@ void rx_exh_fsm(
 				// TODO more than max_wimm_inflight outstanding -> NAK-Invalid Request (Table 6-15)
 			}
 			if (lastPkt)
-				rxExh2msnTable_upd_req.write(rxMsnReq(meta.dest_qp, dmaMeta.msn+1));
+				rxExh2msnTable_upd_req.write(rxMsnReq(meta.dest_qp, dmaMeta.msn+1)); // not on last, but from cack_psn
 			if (meta.ackReq)
-				rx_exhEventMetaFifo.write(ackEvent(meta.dest_qp, meta.psn, false));
+				rx_exhEventMetaFifo.write(ackEvent(meta.dest_qp, meta.psn, false)); // don't generate an ACK, but a SACK request one all previous packets arrived
 			rx_pkgSplitTypeFifo.write(pkgSplit(meta.op_code));
 			rx_pkgShiftTypeFifo.write(pkgShift(immPkt ? SHIFT_RETH_IMM : SHIFT_RETH, meta.dest_qp));
 			pe_fsmState = META;
@@ -2394,15 +2361,15 @@ void ib_transport_protocol(
 	);
 
 	rx_strip_mrc_eth<WIDTH, INSTID>(
-		rx_split2dataFifo,     // was rx_shift2exhFifo
+		rx_split2dataFifo,     
 		rx_ibh2exh_MetaFifo,
 		rx_mrc2exh_MetaFifo,
 		rx_mrc2exhFifo
 	);
 
 	rx_process_exh<WIDTH, INSTID>(
-		rx_mrc2exhFifo,          // was rx_shift2exhFifo
-		rx_mrc2exh_MetaFifo,     // was rx_ibh2exh_MetaFifo
+		rx_mrc2exhFifo,         
+		rx_mrc2exh_MetaFifo,     
 		rx_exhMetaFifo,
 		rx_exh2drop_MetaFifo,
 		rx_exh2dropFifo

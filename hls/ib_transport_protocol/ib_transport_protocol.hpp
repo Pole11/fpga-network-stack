@@ -417,19 +417,19 @@ struct exhOpMeta
 
 /**
  * BaseTransportHeader
- * header(7, 0) = op_code; // OpCode (8bit), IBA packet type, which extension headers follow
+ * 	header(7, 0) = op_code; // OpCode (8bit), IBA packet type, which extension headers follow
  * header[8] = solicited_event;
  * header[9] = mig_req;
  * header(11,10) = pad_count;
  * header(15, 12) = t_ver;
- * header(31, 16) = partition_key;
+ * 	header(31, 16) = partition_key;
  * header[32] = fr;
  * header[33] = br;
  * header(39, 34) = reserved_var;
- * header(63, 40) = reverse(dest_qp);
- * header[71] = ack_req;
+ * 	header(63, 40) = reverse(dest_qp);
+ * 	header[71] = ack_req;
  * header(70, 64) = reserved;
- * header(95, 72) = reverse(psn);
+ * 	header(95, 72) = reverse(psn);
  */
 
 template <int W>
@@ -507,13 +507,10 @@ struct ibhMeta
 
 struct exhMeta
 {
-	bool		isNak;
 	ap_uint<22> numPkg; //TODO how many bits does this need?
-	exhMeta() {}
-	exhMeta(bool isNak)
-		:isNak(isNak), numPkg(1) {}
-	exhMeta(bool isNak, ap_uint<22> numPkg)
-		:isNak(isNak), numPkg(numPkg) {}
+
+	exhMeta() :numPkg(1) {}
+	exhMeta(ap_uint<22> numPkg) :numPkg(numPkg) {}
 };
 
 /**
