@@ -449,11 +449,11 @@ public:
 	}
 	void setPartitionKey(ap_uint<16> key)
 	{
-		header(31, 16) = key;
+		header(31, 16) = reverse(key);
 	}
 	ap_uint<16> getPartitionKey()
 	{
-		return header(31, 16);
+		return reverse((ap_uint<16>) header(31, 16));
 	}
 	void setPsn(ap_uint<24> psn)
 	{
