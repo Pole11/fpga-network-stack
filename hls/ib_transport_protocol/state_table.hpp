@@ -32,12 +32,19 @@ EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "../ib_transport_protocol/ib_transport_protocol.hpp"
 #include <rocev2_config.hpp> //defines MAX_QPS
 
+#define MRC_MPR 128
+
 //PSN, page 293, 307, 345
 struct stateTableEntry
 {
 	//window
 	ap_uint<24> resp_epsn;
 	ap_uint<24> resp_old_outstanding;
+
+	// bit i representes resp_epsn + 1
+	ap_uint<MRC_MPR> resp_bitmap; // packets arrived
+	ap_uint<MRC_MPR> resp_lastmap; // the packet is the last of its message (LAST or ONLY), used for the MSN
+	ap_uint<MRC_MPR> resp_ackmap; // the packet had BTH.A = 1, used for the delayed ACK
 
 	ap_uint<24> req_next_psn;
 	ap_uint<24> req_old_unack;
@@ -73,11 +80,16 @@ struct rxStateReq
 	ap_uint<3>	retryCounter;
 	bool		isResponse;
 	bool		write;
+	ap_uint<MRC_MPR> bitmap;
+	ap_uint<MRC_MPR> lastmap;
+	ap_uint<MRC_MPR> ackmap;
+
 	rxStateReq() :isResponse(false), write(false) {}
 	rxStateReq(ap_uint<24> qpn, bool isRsp)
 		:qpn(qpn), isResponse(isRsp), write(false) {}
-	rxStateReq(ap_uint<16> qpn, ap_uint<24> psn, bool isRsp)
-		:qpn(qpn), epsn(psn), isResponse(isRsp), retryCounter(0x7), write(true) {}
+	rxStateReq(ap_uint<16> qpn, ap_uint<24> psn, ap_uint<MRC_MPR> bitmap, ap_uint<MRC_MPR> lastmap, ap_uint<MRC_MPR> ackmap, bool isRsp)
+		:qpn(qpn), epsn(psn), retryCounter(0x7), isResponse(isRsp), write(true), bitmap(bitmap), lastmap(lastmap), ackmap(ackmap) {}
+	// todo: I think it can be deleted because it only used by NAK
 	rxStateReq(ap_uint<16> qpn, ap_uint<24> psn, ap_uint<3> rc, bool isRsp)
 		:qpn(qpn), epsn(psn), isResponse(isRsp), retryCounter(rc), write(true) {}
 };
@@ -126,6 +138,10 @@ struct rxStateRsp
 	ap_uint<24> max_forward; //used for reponses, page 346
 
 	ap_uint<3>	retryCounter;
+
+	ap_uint<MRC_MPR> bitmap;
+	ap_uint<MRC_MPR> lastmap;
+	ap_uint<MRC_MPR> ackmap;
 
 	rxStateRsp() {}
 	rxStateRsp(ap_uint<24> epsn, ap_uint<24> old)
@@ -190,6 +206,7 @@ void state_table(
 		rxIbh2stateTable_upd_req.read(rxRequest);
 		// Since step B rx_ibh_fsm only handles requests: the isResponse branches below are
 		// unreachable (cleanup)
+		// todo cleanup !!! not all, but just the isResponse branches
 		if (rxRequest.write)
 		{
 			if (rxRequest.isResponse)
@@ -201,6 +218,9 @@ void state_table(
 				state_table[rxRequest.qpn].resp_epsn = rxRequest.epsn;
 				state_table[rxRequest.qpn].retryCounter = rxRequest.retryCounter;
 				//state_table[rxRequest.qpn].sendNAK = rxRequest.epsn;
+				state_table[rxRequest.qpn].resp_bitmap  = rxRequest.bitmap;
+				state_table[rxRequest.qpn].resp_lastmap = rxRequest.lastmap;
+				state_table[rxRequest.qpn].resp_ackmap  = rxRequest.ackmap;
 			}
 		}
 		else
@@ -213,7 +233,11 @@ void state_table(
 			else
 			{
 				// here there is the mapping of resp_old_outstanding and oldest_outstanding_psn
-				stateTable2rxIbh_rsp.write(rxStateRsp(entry.resp_epsn, entry.resp_old_outstanding, entry.resp_epsn, entry.retryCounter));
+				rxStateRsp rsp(entry.resp_epsn, entry.resp_old_outstanding, entry.resp_epsn, entry.retryCounter);
+				rsp.bitmap  = entry.resp_bitmap;
+				rsp.lastmap = entry.resp_lastmap;
+				rsp.ackmap  = entry.resp_ackmap;
+				stateTable2rxIbh_rsp.write(rsp);
 			}
 		}
 	}
@@ -262,6 +286,10 @@ void state_table(
 				state_table[ifRequest.qpn].req_retries = 0;
 				state_table[ifRequest.qpn].req_error   = false;
 				state_table[ifRequest.qpn].retryCounter = 0xF;
+				
+				state_table[ifRequest.qpn].resp_bitmap  = 0;
+				state_table[ifRequest.qpn].resp_lastmap = 0;
+				state_table[ifRequest.qpn].resp_ackmap  = 0;
 			} else {
 				state_table[ifRequest.qpn].req_next_psn = ifRequest.remote_psn;
 				state_table[ifRequest.qpn].req_old_unack = ifRequest.remote_psn;

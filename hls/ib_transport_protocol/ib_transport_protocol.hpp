@@ -493,6 +493,8 @@ struct ibhMeta
 	bool        ackReq;   // BTH.a
 	bool        rtx;      // BTH.rtx
 	bool        ts;       // BTH.ts
+	ap_uint<8>  msnInc;	// how many packets become complete with this packet, is 0 to 128
+	ap_uint<24> cack;	// the new cack_psn, which is the one the ACK must carry
 	ibhMeta()
 		:op_code(MRC_ACK), ackReq(false), rtx(false), ts(false) {}
 	ibhMeta(mrcOpCode op, ap_uint<16> key, ap_uint<24> qp)

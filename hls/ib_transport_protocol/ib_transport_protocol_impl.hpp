@@ -403,14 +403,15 @@ void rx_ibh_fsm(
 #ifdef DBG_IBV
     stream<psnPkg>&	m_axis_dbg,
 #endif
-	stream<ibhMeta>& metaIn,
-	stream<exhMeta>& exhMetaFifo,
-	stream<rxStateRsp>& stateTable_rsp,
-	stream<rxStateReq>& stateTable_upd_req,
-	stream<ibhMeta>& metaOut,
-	stream<ackEvent>& ibhEventFifo,
+	stream<ibhMeta>& metaIn, 					// contains op_code, partition_key, dest_qp, psn, validPSN, numPkg, ackReq, rtx, ts, msnInc, cack
+	stream<exhMeta>& exhMetaFifo,				// only numPkg, can be removed
+	stream<rxStateRsp>& stateTable_rsp,			// contains epsn, oldest_outstanding_psn (is it useful?), max_forward (is it useful?), retryCounter, bitmap, lastmap, ackmap
+	
+	stream<rxStateReq>& stateTable_upd_req,		// contains qpn, epsn, retryCounter, isResponse, write, bitmap, lastmap, ackmap
+	stream<ibhMeta>& metaOut,					// contains op_code, partition_key, dest_qp, psn, validPSN, numPkg, ackReq, rtx, ts, msnInc, cack
+	stream<ackEvent>& ibhEventFifo,				// contains qpn, psn, validPsn, isNak
 	stream<bool>& ibhDropFifo,
-	stream<fwdPolicy>& ibhDropMetaFifo,
+	stream<fwdPolicy>& ibhDropMetaFifo,			// contains isDrop, ackOnly
 	//stream<ackMeta>& m_axis_rx_ack_meta,
 	ap_uint<32>&		regInvalidPsnDropCount
 ) {
@@ -426,6 +427,11 @@ void rx_ibh_fsm(
 	static ap_uint<32> droppedPackets = 0;
 	rxStateRsp qpState;
 
+	// trying to implement a cache, probably I should have tested the latency before
+	static bool        cacheValid = false; // todo: clear this flag when setting up new connections
+	static ap_uint<16> cacheQp;
+	static rxStateRsp  cacheState;
+
 	switch(fsmState)
 	{
 	case LOAD:
@@ -436,128 +442,88 @@ void rx_ibh_fsm(
 			isResponse = checkIfResponse(meta.op_code); // always false since step B: ACKs go to rx_req_fsm			
 			// this is a read, you write on the FIFO a request
 			// it is a read because it has only two parameters, not three
-			stateTable_upd_req.write(rxStateReq(meta.dest_qp, isResponse));
+			if (!(cacheValid && cacheQp == meta.dest_qp(15, 0)))
+				stateTable_upd_req.write(rxStateReq(meta.dest_qp, isResponse));
 			fsmState = PROCESS;
 		}
 		break;
-	case PROCESS:
-		//TODO TIME-WAIT
-		//TODO consider opCode??
-		if (!stateTable_rsp.empty())
+		case PROCESS:
+		bool hit = cacheValid && cacheQp == meta.dest_qp(15, 0);
+		if (hit || !stateTable_rsp.empty())
 		{
-			stateTable_rsp.read(qpState);
-			qpState.oldest_outstanding_psn = qpState.epsn - 8388608; // shouldn't it be 16777215? anyway, this is wrong, it must be updated dynamically
-			//TODO compute or store oldest outstanding??
-			//TODO also increment oldest outstanding
-			//Check if in order
-			//TODO Update oldest_oustanding_psn
-			//TODO this is not working with coalescing ACKs
-			std::cout << std::hex << "[RX IBH FSM " << INSTID << 
-				"]: epsn: " << qpState.epsn 										<< ", " << std::dec << qpState.epsn 							<< std::hex  
-				<< ", packet psn: " << meta.psn 									<< ", " << std::dec << meta.psn 								<< std::hex
-				<< ", oldest outstanding psn: " << qpState.oldest_outstanding_psn 	<< ", " << std::dec << qpState.oldest_outstanding_psn.to_uint()	<< std::hex << std::endl;
-			// For requests we require total order, for responses, there is potential ACK coalescing, see page 299
-			// For requests, max_forward == epsn
-            #ifdef DBG_IBV
-                m_axis_dbg.write(psnPkg(meta.op_code, meta.psn, qpState.epsn, 0));
-            #endif
+			if (hit) qpState = cacheState;
+			else     stateTable_rsp.read(qpState);
 
-			// here!
-			// 32 is the window size, it is a magic number for now
-			// 11.1 suggests 32 as a max value
-			ap_uint<24> psnAhead = meta.psn - qpState.epsn;
-			if (psnAhead < 32)
+			ap_uint<24> d = meta.psn - qpState.epsn; // distance from epsn
+
+			std::cout << std::hex << "[RX IBH FSM " << INSTID << "]: epsn " << qpState.epsn
+			          << ", psn " << meta.psn << ", bitmap " << qpState.bitmap << std::dec << std::endl;
+#ifdef DBG_IBV
+			m_axis_dbg.write(psnPkg(meta.op_code, meta.psn, qpState.epsn, 0));
+#endif
+
+			if (d < MRC_MPR && !qpState.bitmap[d]) // packet is inside the window
 			{
-				// Forwarding
-				ibhDropFifo.write(false);                       // <-- must be here, unconditional
+				// drop drop, simply forward the payload to memory!
+				ibhDropFifo.write(false);
 				ibhDropMetaFifo.write(fwdPolicy(false, false));
 
-				// EXH
-				metaOut.write(meta);
+				// love this:
+				qpState.bitmap[d]  = 1; // bitmap track who arrived
+				qpState.lastmap[d] = (meta.op_code == MRC_RDMA_WRITE_LAST     || meta.op_code == MRC_RDMA_WRITE_ONLY ||
+				                      meta.op_code == MRC_RDMA_WRITE_LAST_IMM || meta.op_code == MRC_RDMA_WRITE_ONLY_IMM); // lastmap tracks who is last/only
+				qpState.ackmap[d]  = meta.ackReq; // ackmap tracks who has an ack req
 
-				// Update psn
-				stateTable_upd_req.write(rxStateReq(meta.dest_qp, meta.psn+emeta.numPkg, isResponse));
-				// Retransmitter release and timer clear moved to rx_req_fsm (mrc_rx_req.hpp)
-#if defined(RETRANS_EN) && defined(DBG_IBV)
-				m_axis_dbg.write(psnPkg(meta.op_code, meta.psn, qpState.epsn, 1));
-#endif
-			}
-			// Check for duplicates
-			// For response: epsn = old_unack, old_oustanding = old_valid
-			// oldest_outstanding_psn can be seen as "the smallest PSN"
-			else if ((qpState.oldest_outstanding_psn < qpState.epsn && meta.psn < qpState.epsn && meta.psn >= qpState.oldest_outstanding_psn)
-					 || (qpState.oldest_outstanding_psn > qpState.epsn && (meta.psn < qpState.epsn || meta.psn >= qpState.oldest_outstanding_psn)))
-			{
-				// Write requests acknowledge, see page 313
-				if (checkIfWrite(meta.op_code))
+				ap_uint<8> n = MRC_MPR; // n is the index of the lowest zero in bitmap, the lowest hole
+				for (int i = MRC_MPR - 1; i >= 0; i--)
 				{
-                    #ifdef DBG_IBV
-                        m_axis_dbg.write(psnPkg(meta.op_code, meta.psn, qpState.epsn, 3));
-                    #endif
-					//Send out ACK
-					ibhEventFifo.write(ackEvent(meta.dest_qp, meta.psn, false)); //TODO do we need PSN???
-					std::cout << std::hex << "[RX IBH FSM " << INSTID << "]: dropping duplicate psn " << meta.psn << std::endl;
-					droppedPackets++;
-					regInvalidPsnDropCount = droppedPackets;
-					ibhDropFifo.write(true);
-					//Meta is required for ACK, TODO no longer
-					ibhDropMetaFifo.write(fwdPolicy(false, true));
+#pragma HLS unroll
+					if (!qpState.bitmap[i]) n = i;
 				}
-				//TODO what about duplicate responses
-				// Drop them
-				else
+
+				// inspect the bits that you are shifting out,
+				meta.msnInc = 0;
+				meta.ackReq = false;
+				for (int i = 0; i < MRC_MPR; i++)
 				{
-                    #ifdef DBG_IBV
-                        m_axis_dbg.write(psnPkg(meta.op_code, meta.psn, qpState.epsn, 4));
-                    #endif
-					// Case Requester: Valid ACKs -> reset timer TODO
-					// Propagate ACKs for flow control
-					if (meta.op_code != MRC_ACK) //TODO do length check instead
-					{
-						ibhDropFifo.write(true);
-					} 
-					ibhDropMetaFifo.write(fwdPolicy(true, false));
+#pragma HLS unroll
+					if (i < n && qpState.lastmap[i]) meta.msnInc++; // count how many message ended
+					if (i < n && qpState.ackmap[i])  meta.ackReq = true; // set meta.ackReq to true in the case that any of those asked for an ACK
 				}
+
+				qpState.epsn    += n;
+				qpState.bitmap  >>= n;
+				qpState.lastmap >>= n;
+				qpState.ackmap  >>= n;
+				meta.cack = qpState.epsn - 1;
+
+				metaOut.write(meta);
+				stateTable_upd_req.write(rxStateReq(meta.dest_qp, qpState.epsn, qpState.bitmap, qpState.lastmap, qpState.ackmap, isResponse));
 			}
-			else // completely invalid
+			else if (d < MRC_MPR || d > 0x800000) // duplicate ( bit is already set or are behind the window by less than 0x80000000)
 			{
-                #ifdef DBG_IBV
-                    m_axis_dbg.write(psnPkg(meta.op_code, meta.psn, qpState.epsn, 5));
-                #endif
-				// behavior, see page 313
-				std::cout << std::hex << "[RX IBH FSM " << INSTID << "]: dropping invalid psn " << meta.psn << " with retry " << qpState.retryCounter << std::endl;
+				std::cout << std::hex << "[RX IBH FSM " << INSTID << "]: duplicate psn " << meta.psn << std::dec << std::endl;
+				// drop counter increased
 				droppedPackets++;
 				regInvalidPsnDropCount = droppedPackets;
+				ibhEventFifo.write(ackEvent(meta.dest_qp, qpState.epsn - 1, false));
+				// drop payload
+				ibhDropFifo.write(true);
+				ibhDropMetaFifo.write(fwdPolicy(false, true)); // no drop, yes ack
+			}
+			else // out of window, silently drop it
+			{
+				std::cout << std::hex << "[RX IBH FSM " << INSTID << "]: out of window psn " << meta.psn << std::dec << std::endl;
+				droppedPackets++;
+				regInvalidPsnDropCount = droppedPackets;
+				ibhDropFifo.write(true);
 				ibhDropMetaFifo.write(fwdPolicy(true, false));
-
-				// Issue NAK TODO NAK has to be in sequence
-				if (meta.op_code != MRC_ACK)
-				{
-					ibhDropFifo.write(true); // mark packet for dropping
-					// Do not generate further ACK/NAKs until we received a valid pkg
-					if (qpState.retryCounter == 0x7)
-					{
-						if (isResponse)
-						{
-							std::cout << "[RX IBH FSM " << INSTID << "]: sending NAK on psn " << meta.psn << std::endl;
-							ibhEventFifo.write(ackEvent(meta.dest_qp, meta.psn, true));
-						}
-						else
-						{
-							std::cout << "[RX IBH FSM " << INSTID << "]: sending NAK on epsn " << qpState.epsn << std::endl;
-							// Setting NAK to epsn, since otherwise epsn-1 is used
-							ibhEventFifo.write(ackEvent(meta.dest_qp, qpState.epsn, true));
-						}
-						qpState.retryCounter--;
-					}
-					// We do not increment PSN
-					// it is a write because it three parameters, not only two
-					stateTable_upd_req.write(rxStateReq(meta.dest_qp, qpState.epsn, qpState.retryCounter, isResponse));
-
-				}
 			}
 
-			fsmState = LOAD;
+			cacheState = qpState;
+			cacheQp    = meta.dest_qp(15, 0);
+			cacheValid = true;
+			fsmState   = LOAD;
 		}
 		break;
 	}
@@ -665,10 +631,11 @@ void rx_exh_fsm(
 				//      then generate the RQ completion carrying it.
 				// TODO more than max_wimm_inflight outstanding -> NAK-Invalid Request (Table 6-15)
 			}
-			if (lastPkt)
-				rxExh2msnTable_upd_req.write(rxMsnReq(meta.dest_qp, dmaMeta.msn+1)); // not on last, but from cack_psn
+			if (meta.msnInc != 0)
+				rxExh2msnTable_upd_req.write(rxMsnReq(meta.dest_qp, dmaMeta.msn + meta.msnInc));
 			if (meta.ackReq)
-				rx_exhEventMetaFifo.write(ackEvent(meta.dest_qp, meta.psn, false)); // don't generate an ACK, but a SACK request one all previous packets arrived
+				rx_exhEventMetaFifo.write(ackEvent(meta.dest_qp, meta.cack, false)); // todo: don't generate an ACK, but a SACK request one all previous packets arrived
+			
 			rx_pkgSplitTypeFifo.write(pkgSplit(meta.op_code));
 			rx_pkgShiftTypeFifo.write(pkgShift(immPkt ? SHIFT_RETH_IMM : SHIFT_RETH, meta.dest_qp));
 			pe_fsmState = META;
