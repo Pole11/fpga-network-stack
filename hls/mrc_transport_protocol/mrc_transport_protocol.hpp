@@ -671,7 +671,7 @@ struct rtrPkg
 };
 
 template <int WIDTH, int INSTID>
-void ib_transport_protocol(	
+void mrc_transport_protocol(	
 	// RX - net module
 	hls::stream<ipUdpMeta>&	s_axis_rx_meta,
 	hls::stream<net_axis<WIDTH> >& s_axis_rx_data,

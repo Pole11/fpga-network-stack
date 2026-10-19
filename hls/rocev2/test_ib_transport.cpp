@@ -37,7 +37,7 @@
 #include <cstdint>
 
 #include "../axi_utils.hpp" //TODO why is this needed here
-#include "../ib_transport_protocol/ib_transport_protocol.hpp"
+#include "../mrc_transport_protocol/mrc_transport_protocol.hpp"
 #include "rocev2_config.hpp"
 
 using namespace hls;
@@ -59,7 +59,7 @@ using namespace hls;
     ap_uint<32> regValidIbvCountTx_n##ninst;
 
 #define IBTRUN(ninst)                               \
-    ib_transport_protocol<DATA_WIDTH, ninst>(       \
+    mrc_transport_protocol<DATA_WIDTH, ninst>(       \
         s_axis_rx_meta_n##ninst,                    \
         s_axis_rx_data_n##ninst,                    \
         m_axis_tx_meta_n##ninst,                    \

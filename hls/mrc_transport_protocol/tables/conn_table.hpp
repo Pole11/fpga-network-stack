@@ -26,60 +26,52 @@ HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABI
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
 EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ************************************************/
-#include "multi_queue.hpp"
-#include <vector>
-#include <queue>
-//#include <random>
+#pragma once
 
-struct TestValue
+#include "../../axi_utils.hpp"
+#include "../mrc_transport_protocol.hpp"
+#include <rocev2_config.hpp> //defines MAX_QPS
+
+struct connTableEntry
 {
-	ap_uint<32> abc;
-	ap_uint<32> cba;
+	//ap_uint<24> local_qpn;
+	ap_uint<24> remote_qpn;
+	ap_uint<128> remote_ip_address; //TODO make variable
+	ap_uint<16> remote_udp_port; //TODO what is this used for
 };
 
-int main()
+template <int INSTID>
+void conn_table(	hls::stream<ap_uint<16> >&	tx_ibhconnTable_req,
+						hls::stream<ifConnReq>&		qpi2connTable_req,
+						hls::stream<connTableEntry>&	tx_connTable2ibh_rsp);
+
+
+template <int INSTID>
+void conn_table(	hls::stream<ap_uint<16> >&	tx_ibhconnTable_req,
+						hls::stream<ifConnReq>&		qpi2connTable_req,
+						hls::stream<connTableEntry>&	tx_connTable2ibh_rsp)
 {
-	hls::stream<mqInsertReq<TestValue> >	multiQueue_push("multiQueue_push");
-	hls::stream<mqPopReq>					multiQueue_pop_req("multiQueue_pop_req");
-	hls::stream<TestValue>					multiQueue_rsp("multiQueue_rsp");
+#pragma HLS PIPELINE II=1
+#pragma HLS INLINE off
 
-	const int NUM_QUEUES = 128;
-	const int QUEUE_SIZE = 2048;
+	static connTableEntry conn_table[MAX_QPS];
+	//#pragma HLS RESOURCE variable=conn_table core=RAM_2P_BRAM
 
-	ap_uint<16> key = 13;
+	ap_uint<16> txRequest;
+	ifConnReq ifRequest;
 
-	int count = 0;
-	while (count < 100000)
+	if (!tx_ibhconnTable_req.empty())
 	{
-		if (count < 10)
-		{
-			TestValue t;
-			t.abc = count+16;
-			t.cba = count+16;
-			mqInsertReq<TestValue> insert = mqInsertReq<TestValue>(key, t);
-			multiQueue_push.write(insert);
-		}
-		if (count >= 10 && count < 30)
-		{
-			if (count % 2 == 0) {
-				multiQueue_pop_req.write(mqPopReq(POP,key));
-			} else {
-				multiQueue_pop_req.write(mqPopReq(FRONT, key));
-			}
-		}
-
-		multi_queue<TestValue, NUM_QUEUES, QUEUE_SIZE>(	multiQueue_push,
-														multiQueue_pop_req,
-														multiQueue_rsp);
-		count++;
+		tx_ibhconnTable_req.read(txRequest);
+		//std::cout << "Requested conn data for: " << txRequest << std::endl;
+		tx_connTable2ibh_rsp.write(conn_table[txRequest]);
 	}
-
-	TestValue ret;
-	while (!multiQueue_rsp.empty())
+	else if (!qpi2connTable_req.empty())
 	{
-		multiQueue_rsp.read(ret);
-		std::cout << "abc: " << ret.abc << ", cba: " << ret.cba << std::endl;
+		qpi2connTable_req.read(ifRequest);
+		//std::cout << "Storing conn data for: " << ifRequest.qpn << std::endl;
+		conn_table[ifRequest.qpn].remote_qpn = ifRequest.remote_qpn;
+		conn_table[ifRequest.qpn].remote_ip_address = ifRequest.remote_ip_address;
+		conn_table[ifRequest.qpn].remote_udp_port = ifRequest.remote_udp_port;
 	}
-
-	return 0;
 }

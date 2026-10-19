@@ -29,7 +29,7 @@ EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #pragma once
 
 #include "../../axi_utils.hpp"
-#include "../ib_transport_protocol.hpp"
+#include "../mrc_transport_protocol.hpp"
 using namespace hls;
 
 const uint32_t META_TABLE_SIZE = 2000;

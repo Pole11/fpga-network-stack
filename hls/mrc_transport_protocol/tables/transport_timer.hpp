@@ -29,9 +29,9 @@ EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #pragma once
 
 #include <iostream>
-#include "../axi_utils.hpp"
-#include "ib_transport_protocol.hpp"
-#include "retransmitter/retransmitter.hpp"
+#include "../../axi_utils.hpp"
+#include "../mrc_transport_protocol.hpp"
+#include "retransmitter.hpp"
 #include <rocev2_config.hpp> //defines MAX_QPS
 
 

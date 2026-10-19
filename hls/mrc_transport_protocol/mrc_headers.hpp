@@ -17,7 +17,7 @@
  ************************************************/
 #pragma once
 
-#include "ib_transport_protocol.hpp"
+#include "mrc_transport_protocol.hpp"
 
 // ------------------------------------------------------------------------------------------------
 // Sizes (bits)

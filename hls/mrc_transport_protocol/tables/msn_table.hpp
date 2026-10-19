@@ -28,7 +28,7 @@ EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ************************************************/
 #pragma once
 
-#include "../axi_utils.hpp"
+#include "../../axi_utils.hpp"
 #include <rocev2_config.hpp> //defines MAX_QPS
 
 struct ifMsnReq

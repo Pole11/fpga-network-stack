@@ -29,71 +29,24 @@ EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 // state machines and tables, and ipv4/, udp/ and crc/
 
-#include "ib_transport_protocol.hpp"
-#include "ib_transport_protocol_impl.hpp"
-#include <rocev2_config.hpp>
-#include "conn_table.hpp"
-#include "state_table.hpp"
-#include "msn_table.hpp"
-#include "transport_timer.hpp"
-#include "retransmitter/retransmitter.hpp"
-#include "read_req_table.hpp"
-#include "multi_queue/multi_queue.hpp"
+#include "mrc_transport_protocol.hpp"
 #include "mrc_headers.hpp"
-#include "mrc_rx_ctrl.hpp"
-#include "mrc_rx_req.hpp"
-
-// ------------------------------------------------------------------------------------------------
-// Merging
-// ------------------------------------------------------------------------------------------------
-void three_merger(
-	stream<event>& in0, stream<event>& in1, stream<event>& in2, stream<event>& out
-) {
-#pragma HLS inline off
-#pragma HLS pipeline II=1
-
-	if (!in0.empty())
-	{
-		out.write(in0.read());
-	}
-	else if (!in1.empty())
-	{
-		out.write(in1.read());
-	}
-	else if (!in2.empty())
-	{
-		out.write(in2.read());
-	}
-}
-
-void merge_retrans_request(	
-	stream<retransMeta>&		tx2retrans_insertMeta,
-	stream<retransAddrLen>&		tx2retrans_insertAddrLen,
-	stream<retransEntry>&		tx2retrans_insertRequest
-) {
-#pragma HLS inline off
-#pragma HLS pipeline II=1
-
-	retransMeta meta;
-	retransAddrLen addrlen;
-
-	if (!tx2retrans_insertMeta.empty() && !tx2retrans_insertAddrLen.empty())
-	{
-		tx2retrans_insertMeta.read(meta);
-		tx2retrans_insertAddrLen.read(addrlen);
-		tx2retrans_insertRequest.write(retransEntry(meta, addrlen));
-	}
-}
-
-
-
-// ------------------------------------------------------------------------------------------------
-// IB transport protocol
-// ------------------------------------------------------------------------------------------------
+#include "tables/conn_table.hpp"
+#include "tables/state_table.hpp"
+#include "tables/msn_table.hpp"
+#include "tables/transport_timer.hpp"
+#include "tables/qp_interface.hpp"
+#include "tables/retransmitter.hpp"
+#include "rx/rx_common.hpp"
+#include "rx/rx_ctrl.hpp"
+#include "rx/rx_ctrl_req.hpp"
+#include "rx/rx_data_res.hpp"
+#include "tx/tx_common.hpp"
+#include "tx/tx_data_req.hpp"
 
 
 template <int WIDTH, int INSTID = 0>
-void ib_transport_protocol(	
+void mrc_transport_protocol(	
 	// RX - net module
 	stream<ipUdpMeta>& s_axis_rx_meta,
 	stream<net_axis<WIDTH> >& s_axis_rx_data,
@@ -760,7 +713,6 @@ void ib_transport_protocol(
     */
 
 #ifdef RETRANS_EN
-	merge_retrans_request(tx2retrans_insertMeta, tx2retrans_insertAddrLen, tx2retrans_insertRequest);
 
 	transport_timer<INSTID>(
 		rxClearTimer_req,
@@ -781,8 +733,8 @@ void ib_transport_protocol(
 }
 
 #ifdef DBG_IBV
-#define ib_transport_protocol_spec_decla(ninst)                 \
-template void ib_transport_protocol<DATA_WIDTH, ninst>(		   	\
+#define mrc_transport_protocol_spec_decla(ninst)                 \
+template void mrc_transport_protocol<DATA_WIDTH, ninst>(		   	\
 	stream<ipUdpMeta>& s_axis_rx_meta,		                    \
 	stream<net_axis<DATA_WIDTH> >& s_axis_rx_data,		        \
 	stream<ipUdpMeta>& m_axis_tx_meta,		                    \
@@ -804,8 +756,8 @@ template void ib_transport_protocol<DATA_WIDTH, ninst>(		   	\
     ap_uint<32>& regIbvCountTx		                       	    \
 );
 #else
-#define ib_transport_protocol_spec_decla(ninst)                 \
-template void ib_transport_protocol<DATA_WIDTH, ninst>(		   	\
+#define mrc_transport_protocol_spec_decla(ninst)                 \
+template void mrc_transport_protocol<DATA_WIDTH, ninst>(		   	\
 	stream<ipUdpMeta>& s_axis_rx_meta,		                    \
 	stream<net_axis<DATA_WIDTH> >& s_axis_rx_data,		        \
 	stream<ipUdpMeta>& m_axis_tx_meta,		                    \
@@ -825,5 +777,5 @@ template void ib_transport_protocol<DATA_WIDTH, ninst>(		   	\
 );
 #endif
 
-ib_transport_protocol_spec_decla(0);
-ib_transport_protocol_spec_decla(1);
+mrc_transport_protocol_spec_decla(0);
+mrc_transport_protocol_spec_decla(1);

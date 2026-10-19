@@ -28,8 +28,8 @@ EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ************************************************/
 #pragma once
 
-#include "../axi_utils.hpp"
-#include "../ib_transport_protocol/ib_transport_protocol.hpp"
+#include "../../axi_utils.hpp"
+#include "../mrc_transport_protocol.hpp"
 #include <rocev2_config.hpp> //defines MAX_QPS
 
 #define MRC_MPR 128

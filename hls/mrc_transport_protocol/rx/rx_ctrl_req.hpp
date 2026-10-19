@@ -1,38 +1,9 @@
-/************************************************
- * MRC RX requestor path
- *
- *  rx_ctrl_fsm --(ACK/SACK/NACK)--> rx_req_fsm --(reqErrEvent)----------------+
- *                                    |    ^                                    v
- *                        reqStateReq |    | reqStateRsp                   rx_ack_cpl --> m_axis_rx_ack_meta
- *                                    v    |                                    ^
- *                                   state_table                                | retrans2rx_init
- *                                                                              | (one per released entry)
- *   rx_req_fsm --> rx2retrans_upd   (ACK: release psn <= cack_psn) --> retransmitter
- *              --> rx2retrans_req   (NACK: resend exactly one psn) --> retransmitter
- *              --> rxClearTimer_req (restart / stop on progress)   --> transport_timer
- *
- * Who does what:
- *   SACK : reliability only. Advances unack_psn (7.4). Never completes WRs (7.2) and never
- *          releases retransmitter entries, so their completion information stays available.
- *   ACK  : advances unack_psn like a SACK AND releases every retransmitter entry with
- *          psn <= cack_psn (BTH.psn, Table 7-6). The retransmitter reports each released entry,
- *          in posted order, and rx_ack_cpl turns it into an ackMeta: that is the completion.
- *   NAK  : semantic (Class B, Table 6-12): QP to ERROR, never a retransmission (Table 6-11).
- *   NACK : retransmit exactly nack_psn (Table 7-3); per-QP retry limit, then QP to ERROR.
- *
- * Not yet implemented (TODOs below): SACK bitmap / fast loss detection (6.2.3), mpr send window,
- * probe-response matching, path marking, congestion control (chapter 8), error completions to
- * the host (needs a status field in ackMeta), stopping TX on QP error.
- *
- * Include this file in ib_transport_protocol.cpp right after mrc_rx_ctrl.hpp.
- ************************************************/
 #pragma once
 
-#include "mrc_headers.hpp"
+#include "../mrc_headers.hpp"
+#include "../tables/state_table.hpp"
+#include "../tables/retransmitter.hpp"
 
-// ------------------------------------------------------------------------------------------------
-// rx_req_fsm -> rx_ack_cpl: the QP entered the ERROR state
-// ------------------------------------------------------------------------------------------------
 typedef enum {
 	REQ_ERR_REMOTE_NAK     = 0, // AETH NAK: Invalid Request / Remote Access / Remote Op Error
 	REQ_ERR_REMOTE_OP      = 1, // NACK UNEXP_EVENT ("Remote Operation Error")
@@ -58,14 +29,10 @@ inline bool mrcNackRetriable(ap_uint<8> reason)
 	       reason == NACK_NO_PKT_BUFFER || reason == NACK_NO_RESOURCE || reason == NACK_PSN_OOR_WINDOW;
 }
 
-/**
- * Requestor reliability engine: the only writer of the requestor state, of retransmitter
- * release / retransmit requests and of the Local ACK timer.
- *
- * LOAD issues the state read, PROCESS decides and writes back at most once. The read of the next
- * packet goes through the same FIFO as the write of the previous one, so back-to-back packets of
- * the same QP always see the updated state.
- */
+// requestor reliability engine: the only writer of the requestor state, of retransmitter release / retransmit requests and of the Local ACK timer
+// LOAD issues the state read
+// PROCESS decides and writes back at most once
+// the read of the next packet goes through the same FIFO as the write of the previous one, so back-to-back packets of the same QP always see the updated state
 template <int WIDTH, int INSTID = 0>
 void rx_req_fsm(
 	stream<mrcCtrlMeta<WIDTH> >& metaIn,
@@ -268,13 +235,9 @@ void rx_req_fsm(
 	}
 }
 
-/**
- * Completions for the host.
- *
- * Every retransmitter entry released by a transport ACK becomes one ackMeta, in posted order,
- * carrying that packet's lst: the same stream the host received before, now driven by cumulative
- * ACKs. Kept in its own process so a slow host interface never stalls rx_req_fsm.
- */
+// completions for the host
+// every retransmitter entry released by a transport ACK becomes one ackMeta, in posted order, carrying that packet's lst: the same stream the host received before, now driven by cumulative ACKs 
+// kept in its own process so a slow host interface never stalls rx_req_fsm
 template <int INSTID = 0>
 void rx_ack_cpl(
 #ifdef RETRANS_EN

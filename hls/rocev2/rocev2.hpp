@@ -33,7 +33,7 @@
 #include "../ipv6/ipv6.hpp"
 #include "../udp/udp.hpp"
 #include "../crc/crc.hpp"
-#include "../ib_transport_protocol/ib_transport_protocol.hpp"
+#include "../mrc_transport_protocol/mrc_transport_protocol.hpp"
 
 #if IP_VERSION == 6
 typedef ipv6Meta ipMeta;
