@@ -184,7 +184,8 @@ void state_table(
 	hls::stream<rxStateRsp>& stateTable2rxIbh_rsp,
 	hls::stream<reqStateRsp>& stateTable2rxCtrl_rsp,
 	hls::stream<stateTableEntry>& stateTable2txIbh_rsp,
-	hls::stream<stateTableEntry>& stateTable2qpi_rsp
+	hls::stream<stateTableEntry>& stateTable2qpi_rsp,
+	hls::stream<ap_uint<16> >& stateTable2rxIbh_inv // invalidate cache line
 ) {
 #pragma HLS PIPELINE II=1
 #pragma HLS INLINE off
@@ -277,7 +278,7 @@ void state_table(
 			std::cout << std::hex << "[STATE TABLE " << INSTID << "]: setup new connection, psn " << ifRequest.remote_psn << std::endl;
 			//state_table[ifRequest.qpn].state = ifRequest.newState;
 			//state_table[ifRequest.qpn].prevOpCode = RC_RDMA_WRITE_LAST;
-			if(!ifRequest.selective_update_remote_psn) {
+			if(!ifRequest.selective_update_remote_psn) { // ful setup
 				state_table[ifRequest.qpn].resp_epsn = ifRequest.local_psn;
 				state_table[ifRequest.qpn].resp_old_outstanding = ifRequest.local_psn;
 				state_table[ifRequest.qpn].req_next_psn = ifRequest.remote_psn;
@@ -290,6 +291,7 @@ void state_table(
 				state_table[ifRequest.qpn].resp_bitmap  = 0;
 				state_table[ifRequest.qpn].resp_lastmap = 0;
 				state_table[ifRequest.qpn].resp_ackmap  = 0;
+				stateTable2rxIbh_inv.write(ifRequest.qpn);
 			} else {
 				state_table[ifRequest.qpn].req_next_psn = ifRequest.remote_psn;
 				state_table[ifRequest.qpn].req_old_unack = ifRequest.remote_psn;

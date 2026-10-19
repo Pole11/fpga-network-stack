@@ -131,19 +131,19 @@ void ib_transport_protocol(
 ) {
 #pragma HLS INLINE
 
-	static stream<net_axis<WIDTH> > 			rx_ibh2shiftFifo("rx_ibh2shiftFifo");
-	static stream<net_axis<WIDTH> > 			rx_shift2exhFifo("rx_shift2exhFifo");
-	static stream<net_axis<WIDTH> > 			rx_exh2dropFifo("rx_exh2dropFifo");
-	static stream<net_axis<WIDTH> >			rx_ibhDrop2exhFifo("rx_ibhDrop2exhFifo");
+	static stream<net_axis<WIDTH> > rx_ibh2shiftFifo("rx_ibh2shiftFifo");
+	static stream<net_axis<WIDTH> > rx_shift2exhFifo("rx_shift2exhFifo");
+	static stream<net_axis<WIDTH> > rx_exh2dropFifo("rx_exh2dropFifo");
+	static stream<net_axis<WIDTH> >	rx_ibhDrop2exhFifo("rx_ibhDrop2exhFifo");
 	static stream<ibhMeta> 			rx_ibh2fsm_MetaFifo("rx_ibh2fsm_MetaFifo");
 	static stream<ibhMeta>			rx_fsm2exh_MetaFifo("rx_fsm2exh_MetaFifo");
 	static stream<net_axis<WIDTH> >	rx_exh2rethShiftFifo("rx_exh2rethShiftFifo");
-	static stream<net_axis<WIDTH> >			rx_exh2aethShiftFifo("rx_exh2aethShiftFifo");
+	static stream<net_axis<WIDTH> >	rx_exh2aethShiftFifo("rx_exh2aethShiftFifo");
 	static stream<net_axis<WIDTH> >	rx_exhNoShiftFifo("rx_exhNoShiftFifo");
 	static stream<net_axis<WIDTH> >	rx_rethSift2mergerFifo("rx_rethSift2mergerFifo");
-	static stream<net_axis<WIDTH> >			rx_aethSift2mergerFifo("rx_aethSift2mergerFifo");
-	static stream<pkgSplit>		rx_pkgSplitTypeFifo("rx_pkgSplitTypeFifo");
-	static stream<pkgShift> 	rx_pkgShiftTypeFifo("rx_pkgShiftTypeFifo");
+	static stream<net_axis<WIDTH> >	rx_aethSift2mergerFifo("rx_aethSift2mergerFifo");
+	static stream<pkgSplit>			rx_pkgSplitTypeFifo("rx_pkgSplitTypeFifo");
+	static stream<pkgShift> 		rx_pkgShiftTypeFifo("rx_pkgShiftTypeFifo");
 	#pragma HLS STREAM depth=2 variable=rx_ibh2shiftFifo
 	#pragma HLS STREAM depth=2 variable=rx_shift2exhFifo
 	#pragma HLS STREAM depth=32 variable=rx_exh2dropFifo
@@ -263,6 +263,8 @@ void ib_transport_protocol(
 	static stream<stateTableEntry> stateTable2qpi_rsp("stateTable2qpi_rsp");
 	static stream<reqStateReq> rxCtrl2stateTable_upd_req("rxCtrl2stateTable_upd_req");
 	static stream<reqStateRsp> stateTable2rxCtrl_rsp("stateTable2rxCtrl_rsp");
+	static stream<ap_uint<16> > stateTable2rxIbh_inv("stateTable2rxIbh_inv");
+	#pragma HLS STREAM depth=4 variable=stateTable2rxIbh_inv
 	#pragma HLS STREAM depth=2 variable=rxCtrl2stateTable_upd_req
 	#pragma HLS STREAM depth=2 variable=stateTable2rxCtrl_rsp
 #if defined( __VITIS_HLS__)
@@ -557,6 +559,7 @@ void ib_transport_protocol(
 		rx_ibhEventFifo,
 		rx_ibhDropFifo,
 		rx_ibhDropMetaFifo,
+		stateTable2rxIbh_inv,
 		//m_axis_rx_ack_meta,
 		regInvalidPsnDropCount
 	);
@@ -725,7 +728,8 @@ void ib_transport_protocol(
  	                    stateTable2rxIbh_rsp,
 	                    stateTable2rxCtrl_rsp,
  	                    stateTable2txIbh_rsp,
- 	                    stateTable2qpi_rsp);
+ 	                    stateTable2qpi_rsp,
+	                    stateTable2rxIbh_inv);
 
 	msn_table<INSTID>(
 		rxExh2msnTable_upd_req,

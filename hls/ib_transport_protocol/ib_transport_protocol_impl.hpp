@@ -413,7 +413,8 @@ void rx_ibh_fsm(
 	stream<bool>& ibhDropFifo,
 	stream<fwdPolicy>& ibhDropMetaFifo,			// contains isDrop, ackOnly
 	//stream<ackMeta>& m_axis_rx_ack_meta,
-	ap_uint<32>&		regInvalidPsnDropCount
+	stream<ap_uint<16> >& stateTableInv,		// qpn of every QP set up again: its cached state is stale
+	ap_uint<32>& regInvalidPsnDropCount
 ) {
 #pragma HLS inline off
 #pragma HLS pipeline II=1
@@ -428,27 +429,32 @@ void rx_ibh_fsm(
 	rxStateRsp qpState;
 
 	// trying to implement a cache, probably I should have tested the latency before
-	static bool        cacheValid = false; // todo: clear this flag when setting up new connections
+	static bool        cacheValid = false; 
 	static ap_uint<16> cacheQp;
 	static rxStateRsp  cacheState;
+	static bool        hit;
 
 	switch(fsmState)
 	{
 	case LOAD:
-		if (!metaIn.empty() && !exhMetaFifo.empty())
+		if (!stateTableInv.empty())
+		{
+			if (stateTableInv.read() == cacheQp)
+				cacheValid = false;
+		}
+		else if (!metaIn.empty() && !exhMetaFifo.empty())
 		{
 			metaIn.read(meta);
 			exhMetaFifo.read(emeta);
-			isResponse = checkIfResponse(meta.op_code); // always false since step B: ACKs go to rx_req_fsm			
-			// this is a read, you write on the FIFO a request
-			// it is a read because it has only two parameters, not three
-			if (!(cacheValid && cacheQp == meta.dest_qp(15, 0)))
+			isResponse = checkIfResponse(meta.op_code);
+			hit = cacheValid && cacheQp == meta.dest_qp(15, 0);
+			if (!hit)
 				stateTable_upd_req.write(rxStateReq(meta.dest_qp, isResponse));
 			fsmState = PROCESS;
 		}
 		break;
-		case PROCESS:
-		bool hit = cacheValid && cacheQp == meta.dest_qp(15, 0);
+	case PROCESS:
+	{
 		if (hit || !stateTable_rsp.empty())
 		{
 			if (hit) qpState = cacheState;
@@ -457,7 +463,7 @@ void rx_ibh_fsm(
 			ap_uint<24> d = meta.psn - qpState.epsn; // distance from epsn
 
 			std::cout << std::hex << "[RX IBH FSM " << INSTID << "]: epsn " << qpState.epsn
-			          << ", psn " << meta.psn << ", bitmap " << qpState.bitmap << std::dec << std::endl;
+						<< ", psn " << meta.psn << ", bitmap " << qpState.bitmap << std::dec << std::endl;
 #ifdef DBG_IBV
 			m_axis_dbg.write(psnPkg(meta.op_code, meta.psn, qpState.epsn, 0));
 #endif
@@ -471,7 +477,7 @@ void rx_ibh_fsm(
 				// love this:
 				qpState.bitmap[d]  = 1; // bitmap track who arrived
 				qpState.lastmap[d] = (meta.op_code == MRC_RDMA_WRITE_LAST     || meta.op_code == MRC_RDMA_WRITE_ONLY ||
-				                      meta.op_code == MRC_RDMA_WRITE_LAST_IMM || meta.op_code == MRC_RDMA_WRITE_ONLY_IMM); // lastmap tracks who is last/only
+										meta.op_code == MRC_RDMA_WRITE_LAST_IMM || meta.op_code == MRC_RDMA_WRITE_ONLY_IMM); // lastmap tracks who is last/only
 				qpState.ackmap[d]  = meta.ackReq; // ackmap tracks who has an ack req
 
 				ap_uint<8> n = MRC_MPR; // n is the index of the lowest zero in bitmap, the lowest hole
@@ -527,6 +533,7 @@ void rx_ibh_fsm(
 		}
 		break;
 	}
+	} // switch
 }
 
 /**
