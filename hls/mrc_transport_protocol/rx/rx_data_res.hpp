@@ -300,9 +300,9 @@ void rx_ibh_fsm(
 #endif
 	stream<ibhMeta>& metaIn, 					// contains op_code, partition_key, dest_qp, psn, validPSN, numPkg, ackReq, rtx, ts, msnInc, cack
 	stream<exhMeta>& exhMetaFifo,				// only numPkg, can be removed
-	stream<rxStateRsp>& stateTable_rsp,			// contains epsn, oldest_outstanding_psn (is it useful?), max_forward (is it useful?), retryCounter, bitmap, lastmap, ackmap
+	stream<rxStateRsp>& stateTable_rsp,			// contains epsn, oldest_outstanding_psn (is it useful?), max_forward (is it useful?), retryCounter, bitmap, lastmap, (ackmap) prevAr
 	
-	stream<rxStateReq>& stateTable_upd_req,		// contains qpn, epsn, retryCounter, isResponse, write, bitmap, lastmap, ackmap
+	stream<rxStateReq>& stateTable_upd_req,		// contains qpn, epsn, retryCounter, isResponse, write, bitmap, lastmap, (ackmap) prevAr
 	stream<ibhMeta>& metaOut,					// contains op_code, partition_key, dest_qp, psn, validPSN, numPkg, ackReq, rtx, ts, msnInc, cack
 	stream<ackEvent>& ibhEventFifo,				// contains qpn, psn, validPsn, isNak
 	stream<bool>& ibhDropFifo,
@@ -372,36 +372,35 @@ void rx_ibh_fsm(
 				// love this:
 				qpState.bitmap[d]  = 1; // bitmap track who arrived
 				qpState.lastmap[d] = (meta.op_code == MRC_RDMA_WRITE_LAST     || meta.op_code == MRC_RDMA_WRITE_ONLY ||
-										meta.op_code == MRC_RDMA_WRITE_LAST_IMM || meta.op_code == MRC_RDMA_WRITE_ONLY_IMM); // lastmap tracks who is last/only
-				qpState.ackmap[d]  = meta.ackReq; // ackmap tracks who has an ack req
+									meta.op_code == MRC_RDMA_WRITE_LAST_IMM || meta.op_code == MRC_RDMA_WRITE_ONLY_IMM); // lastmap tracks who is last/only
 
 				ap_uint<8> n = MRC_MPR; // n is the index of the lowest zero in bitmap, the lowest hole
 				for (int i = MRC_MPR - 1; i >= 0; i--)
 				{
-#pragma HLS unroll
+				#pragma HLS unroll
 					if (!qpState.bitmap[i]) n = i;
 				}
 
-				// inspect the bits that you are shifting out,
 				meta.msnInc = 0;
-				meta.ackReq = false;
 				for (int i = 0; i < MRC_MPR; i++)
 				{
-#pragma HLS unroll
+				#pragma HLS unroll
 					if (i < n && qpState.lastmap[i]) meta.msnInc++; // count how many message ended
-					if (i < n && qpState.ackmap[i])  meta.ackReq = true; // set meta.ackReq to true in the case that any of those asked for an ACK
 				}
 
 				qpState.epsn    += n;
 				qpState.bitmap  >>= n;
 				qpState.lastmap >>= n;
-				qpState.ackmap  >>= n;
 				meta.cack = qpState.epsn - 1;
 
+				qpState.prevAr = qpState.prevAr || meta.ackReq;          // an AR (also this packet's) is pending
+				meta.ackReq    = qpState.prevAr && n != 0;               // cack advanced while an AR is pending: ACK
+				qpState.prevAr = qpState.prevAr && qpState.bitmap != 0;  // bitmap empty, cack == max_rcv_psn: every AR is covered
+
 				metaOut.write(meta);
-				stateTable_upd_req.write(rxStateReq(meta.dest_qp, qpState.epsn, qpState.bitmap, qpState.lastmap, qpState.ackmap, isResponse));
+				stateTable_upd_req.write(rxStateReq(meta.dest_qp, qpState.epsn, qpState.bitmap, qpState.lastmap, qpState.prevAr, isResponse));
 			}
-			else if (d < MRC_MPR || d > 0x800000) // duplicate ( bit is already set or are behind the window by less than 0x80000000)
+			else if (d < MRC_MPR || d > 0x800000) // duplicate ( bit is already set or are behind the window by less than 0x800000)
 			{
 				std::cout << std::hex << "[RX IBH FSM " << INSTID << "]: duplicate psn " << meta.psn << std::dec << std::endl;
 				// drop counter increased

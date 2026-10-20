@@ -44,8 +44,9 @@ struct stateTableEntry
 	// bit i representes resp_epsn + 1
 	ap_uint<MRC_MPR> resp_bitmap; // packets arrived
 	ap_uint<MRC_MPR> resp_lastmap; // the packet is the last of its message (LAST or ONLY), used for the MSN
-	ap_uint<MRC_MPR> resp_ackmap; // the packet had BTH.A = 1, used for the delayed ACK
-
+	//ap_uint<MRC_MPR> resp_ackmap; // the packet had BTH.A = 1, used for the delayed ACK
+	bool resp_prev_ar; // an AR arrived and the bitmap has not been empty since (there are still holes)
+	
 	ap_uint<24> req_next_psn;
 	ap_uint<24> req_old_unack;
 	ap_uint<24> req_old_valid; //required? can be computed?
@@ -82,16 +83,16 @@ struct rxStateReq
 	bool		write;
 	ap_uint<MRC_MPR> bitmap;
 	ap_uint<MRC_MPR> lastmap;
-	ap_uint<MRC_MPR> ackmap;
+	//ap_uint<MRC_MPR> ackmap;
+	bool prevAr;
 
 	rxStateReq() :isResponse(false), write(false) {}
 	rxStateReq(ap_uint<24> qpn, bool isRsp)
 		:qpn(qpn), isResponse(isRsp), write(false) {}
-	rxStateReq(ap_uint<16> qpn, ap_uint<24> psn, ap_uint<MRC_MPR> bitmap, ap_uint<MRC_MPR> lastmap, ap_uint<MRC_MPR> ackmap, bool isRsp)
-		:qpn(qpn), epsn(psn), retryCounter(0x7), isResponse(isRsp), write(true), bitmap(bitmap), lastmap(lastmap), ackmap(ackmap) {}
-	// todo: I think it can be deleted because it only used by NAK
-	rxStateReq(ap_uint<16> qpn, ap_uint<24> psn, ap_uint<3> rc, bool isRsp)
-		:qpn(qpn), epsn(psn), isResponse(isRsp), retryCounter(rc), write(true) {}
+	//rxStateReq(ap_uint<16> qpn, ap_uint<24> psn, ap_uint<MRC_MPR> bitmap, ap_uint<MRC_MPR> lastmap, ap_uint<MRC_MPR> ackmap, bool isRsp)
+	//	:qpn(qpn), epsn(psn), retryCounter(0x7), isResponse(isRsp), write(true), bitmap(bitmap), lastmap(lastmap), ackmap(ackmap) {}
+	rxStateReq(ap_uint<16> qpn, ap_uint<24> psn, ap_uint<MRC_MPR> bitmap, ap_uint<MRC_MPR> lastmap, bool prevAr, bool isRsp)
+		:qpn(qpn), epsn(psn), retryCounter(0x7), isResponse(isRsp), write(true), bitmap(bitmap), lastmap(lastmap), prevAr(prevAr) {}
 };
 
 // ------------------------------------------------------------------------------------------------
@@ -141,7 +142,8 @@ struct rxStateRsp
 
 	ap_uint<MRC_MPR> bitmap;
 	ap_uint<MRC_MPR> lastmap;
-	ap_uint<MRC_MPR> ackmap;
+	//ap_uint<MRC_MPR> ackmap;
+	bool prevAr;
 
 	rxStateRsp() {}
 	rxStateRsp(ap_uint<24> epsn, ap_uint<24> old)
@@ -221,7 +223,8 @@ void state_table(
 				//state_table[rxRequest.qpn].sendNAK = rxRequest.epsn;
 				state_table[rxRequest.qpn].resp_bitmap  = rxRequest.bitmap;
 				state_table[rxRequest.qpn].resp_lastmap = rxRequest.lastmap;
-				state_table[rxRequest.qpn].resp_ackmap  = rxRequest.ackmap;
+				//state_table[rxRequest.qpn].resp_ackmap  = rxRequest.ackmap;
+				state_table[rxRequest.qpn].resp_prev_ar = rxRequest.prevAr;
 			}
 		}
 		else
@@ -237,7 +240,8 @@ void state_table(
 				rxStateRsp rsp(entry.resp_epsn, entry.resp_old_outstanding, entry.resp_epsn, entry.retryCounter);
 				rsp.bitmap  = entry.resp_bitmap;
 				rsp.lastmap = entry.resp_lastmap;
-				rsp.ackmap  = entry.resp_ackmap;
+				//rsp.ackmap  = entry.resp_ackmap;
+				rsp.prevAr = entry.resp_prev_ar;
 				stateTable2rxIbh_rsp.write(rsp);
 			}
 		}
@@ -290,7 +294,8 @@ void state_table(
 				
 				state_table[ifRequest.qpn].resp_bitmap  = 0;
 				state_table[ifRequest.qpn].resp_lastmap = 0;
-				state_table[ifRequest.qpn].resp_ackmap  = 0;
+				//state_table[ifRequest.qpn].resp_ackmap  = 0;
+				state_table[ifRequest.qpn].resp_prev_ar = false;
 				stateTable2rxIbh_inv.write(ifRequest.qpn);
 			} else {
 				state_table[ifRequest.qpn].req_next_psn = ifRequest.remote_psn;

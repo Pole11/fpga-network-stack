@@ -713,6 +713,7 @@ void mrc_transport_protocol(
     */
 
 #ifdef RETRANS_EN
+	merge_retrans_request(tx2retrans_insertMeta, tx2retrans_insertAddrLen, tx2retrans_insertRequest);
 
 	transport_timer<INSTID>(
 		rxClearTimer_req,
