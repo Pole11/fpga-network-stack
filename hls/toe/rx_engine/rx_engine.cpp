@@ -2117,7 +2117,7 @@ void rx_engine(	stream<net_axis<WIDTH> >&					ipRxData,
 	//Assumes for WIDTH > 64 no optional fields
 	drop_optional_ip_header<WIDTH>(rx_process2dropLengthFifo, rxEng_dataBuffer0, rxEng_dataBuffer4);
 	//align
-	lshiftWordByOctet<WIDTH, 2>(((TCP_PSEUDO_HEADER_SIZE%WIDTH)/8), rxEng_dataBuffer4, rxEng_dataBuffer5);
+	lshiftWordByOctet<WIDTH, 2, ((TCP_PSEUDO_HEADER_SIZE%WIDTH)/8)>(rxEng_dataBuffer4, rxEng_dataBuffer5);
 	//rxTcpLengthExtract(ipRxData, rxEng_dataBuffer0, rxEng_tcpLenFifo);
 
 	constructPseudoHeader<WIDTH>(rxEng_ipMetaFifo, rxEng_pseudoHeaderFifo);
@@ -2164,8 +2164,8 @@ void rx_engine(	stream<net_axis<WIDTH> >&					ipRxData,
 								rxEng2portTable_req,
 								rxEng_optionalFieldsMetaFifo);
 
-	rshiftWordByOctet<net_axis<WIDTH>, WIDTH, 3>(((TCP_FULL_PSEUDO_HEADER_SIZE%WIDTH)/8), rxEng_dataBuffer3a, rxEng_dataBuffer3b);
-
+	rshiftWordByOctet<net_axis<WIDTH>, WIDTH, 3, ((TCP_FULL_PSEUDO_HEADER_SIZE%WIDTH)/8)>(rxEng_dataBuffer3a, rxEng_dataBuffer3b);
+	
 	drop_optional_header_fields<WIDTH>(rxEng_optionalFieldsMetaFifo,
 													rxEng_dataBuffer3b,
 #if (WINDOW_SCALE)

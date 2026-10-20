@@ -70,7 +70,7 @@ const ap_uint<16> RDMA_DEFAULT_PORT = 0x12B7; //4791 --> 0x12B7
 typedef enum {RESET, INIT, READY_RECV, READY_SEND, SQ_ERROR, ERROR} qpState;
 
 typedef enum {AETH, RETH, RAW, IMMED} pkgType;
-typedef enum {SHIFT_AETH, SHIFT_RETH, SHIFT_NONE, SHIFT_RETH_IMM} pkgShiftType;
+typedef enum {SHIFT_RETH, SHIFT_NONE, SHIFT_RETH_IMM} pkgShiftType;
 typedef enum {PKG_SEND, PKG_WRITE} pkgOper;
 
 typedef enum {
@@ -164,20 +164,6 @@ struct ifConnReq
 	ifConnReq() {}
 	ifConnReq(ap_uint<16> qpn, ap_uint<24> remote_qpn, ap_uint<128> remote_ip_address, ap_uint<16> remote_udp_port)
 				:qpn(qpn), remote_qpn(remote_qpn), remote_ip_address(remote_ip_address), remote_udp_port(remote_udp_port) {}
-};
-
-struct readRequest
-{
-	ap_uint<24> qpn;
-	ap_uint<64> vaddr;
-	ap_uint<32> dma_length;
-	ap_uint<24> psn;
-	ap_uint<1>  host;
-	
-	readRequest() {}
-	readRequest(ap_uint<24> qpn, ap_uint<64> vaddr, ap_uint<32> len, ap_uint<24> psn)
-//		:qpn(qpn), vaddr(vaddr), dma_length(len), psn(psn) {}
-		:qpn(qpn), vaddr(vaddr), dma_length(len), psn(psn), host(1) {}
 };
 
 struct fwdPolicy

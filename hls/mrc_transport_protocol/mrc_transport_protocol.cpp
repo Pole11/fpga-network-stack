@@ -91,10 +91,8 @@ void mrc_transport_protocol(
 	static stream<ibhMeta> 			rx_ibh2fsm_MetaFifo("rx_ibh2fsm_MetaFifo");
 	static stream<ibhMeta>			rx_fsm2exh_MetaFifo("rx_fsm2exh_MetaFifo");
 	static stream<net_axis<WIDTH> >	rx_exh2rethShiftFifo("rx_exh2rethShiftFifo");
-	static stream<net_axis<WIDTH> >	rx_exh2aethShiftFifo("rx_exh2aethShiftFifo");
 	static stream<net_axis<WIDTH> >	rx_exhNoShiftFifo("rx_exhNoShiftFifo");
 	static stream<net_axis<WIDTH> >	rx_rethSift2mergerFifo("rx_rethSift2mergerFifo");
-	static stream<net_axis<WIDTH> >	rx_aethSift2mergerFifo("rx_aethSift2mergerFifo");
 	static stream<pkgSplit>			rx_pkgSplitTypeFifo("rx_pkgSplitTypeFifo");
 	static stream<pkgShift> 		rx_pkgShiftTypeFifo("rx_pkgShiftTypeFifo");
 	#pragma HLS STREAM depth=2 variable=rx_ibh2shiftFifo
@@ -104,10 +102,8 @@ void mrc_transport_protocol(
 	#pragma HLS STREAM depth=2 variable=rx_ibh2fsm_MetaFifo
 	#pragma HLS STREAM depth=2 variable=rx_fsm2exh_MetaFifo
 	#pragma HLS STREAM depth=4 variable=rx_exh2rethShiftFifo
-	#pragma HLS STREAM depth=4 variable=rx_exh2aethShiftFifo
 	#pragma HLS STREAM depth=4 variable=rx_exhNoShiftFifo
 	#pragma HLS STREAM depth=4 variable=rx_rethSift2mergerFifo
-	#pragma HLS STREAM depth=4 variable=rx_aethSift2mergerFifo
 	#pragma HLS STREAM depth=2 variable=rx_pkgSplitTypeFifo
 	#pragma HLS STREAM depth=2 variable=rx_pkgShiftTypeFifo
 #if defined( __VITIS_HLS__)
@@ -123,18 +119,14 @@ void mrc_transport_protocol(
 #endif 
 	static stream<ackEvent>  rx_ibhEventFifo("rx_ibhEventFifo"); //TODO rename
 	static stream<ackEvent>  rx_exhEventMetaFifo("rx_exhEventMetaFifo");
-	static stream<memCmdInternal> rx_remoteMemCmd("rx_remoteMemCmd");
 	#pragma HLS STREAM depth=2 variable=rx_ibhEventFifo
 	#pragma HLS STREAM depth=2 variable=rx_exhEventMetaFifo
-	#pragma HLS STREAM depth=64 variable=rx_remoteMemCmd
 #if defined( __VITIS_HLS__)
 	#pragma HLS aggregate  variable=rx_ibhEventFifo compact=bit
 	#pragma HLS aggregate  variable=rx_exhEventMetaFifo compact=bit
-	#pragma HLS aggregate  variable=rx_remoteMemCmd compact=bit
 #else
 	#pragma HLS DATA_PACK variable=rx_ibhEventFifo
 	#pragma HLS DATA_PACK variable=rx_exhEventMetaFifo
-	#pragma HLS DATA_PACK variable=rx_remoteMemCmd
 #endif
 
 	static stream<ibhMeta>	tx_ibhMetaFifo("tx_ibhMetaFifo");
@@ -273,25 +265,13 @@ void mrc_transport_protocol(
 #endif
 
 	static stream<ap_uint<16> > exh_lengthFifo("exh_lengthFifo");
-	static stream<readRequest>	rx_readRequestFifo("rx_readRequestFifo");
-	static stream<event>		rx_readEvenFifo("rx_readEvenFifo");
 	static stream<ackEvent>		rx_ackEventFifo("rx_ackEventFifo");
 	#pragma HLS STREAM depth=4 variable=exh_lengthFifo
-	#pragma HLS STREAM depth=16 variable=rx_readRequestFifo
-	#pragma HLS STREAM depth=64 variable=rx_readEvenFifo
 	#pragma HLS STREAM depth=32 variable=rx_ackEventFifo
 #if defined( __VITIS_HLS__)
-	#pragma HLS aggregate  variable=rx_readRequestFifo compact=bit
-	#pragma HLS bind_storage variable=rx_readRequestFifo type=FIFO impl=LUTRAM
-
-	#pragma HLS aggregate  variable=rx_readEvenFifo compact=bit
-	#pragma HLS bind_storage variable=rx_readEvenFifo type=FIFO
-
 	#pragma HLS aggregate  variable=rx_ackEventFifo compact=bit
 	#pragma HLS bind_storage variable=rx_ackEventFifo type=FIFO impl=LUTRAM
 #else
-	#pragma HLS DATA_PACK variable=rx_readRequestFifo
-	#pragma HLS DATA_PACK variable=rx_readEvenFifo
 	#pragma HLS DATA_PACK variable=rx_ackEventFifo
 #endif
 
@@ -395,7 +375,6 @@ void mrc_transport_protocol(
 	#pragma HLS STREAM depth=4 variable=rx_udpSplit2ctrl_MetaFifo
 	#pragma HLS STREAM depth=2 variable=rx_ctrl2fsm_MetaFifo
 	#pragma HLS STREAM depth=8  variable=rx_ctrl2req_MetaFifo
-	#pragma HLS STREAM depth=16 variable=rx_req2cpl_Fifo
 #if defined( __VITIS_HLS__)
 	#pragma HLS aggregate variable=rx_ibh2ctrl_MetaFifo compact=bit
 	#pragma HLS aggregate variable=rx_udpSplit2data_MetaFifo compact=bit
@@ -452,7 +431,7 @@ void mrc_transport_protocol(
 		regIbvCountRx
 	);
 
-	rshiftWordByOctet<net_axis<WIDTH>, WIDTH,11, INSTID>(((BTH_SIZE%WIDTH)/8), rx_ibh2shiftFifo, rx_shift2exhFifo);
+	rshiftWordByOctet<net_axis<WIDTH>, WIDTH, 11, ((BTH_SIZE%WIDTH)/8), INSTID>(rx_ibh2shiftFifo, rx_shift2exhFifo);
 
 	// data / control split
 	rx_split_ctrl<WIDTH, INSTID>(rx_shift2exhFifo, rx_ibh2split_Fifo, rx_split2dataFifo, rx_split2ctrlFifo);
@@ -534,12 +513,10 @@ void mrc_transport_protocol(
 		rx_drop2exhFsm_MetaFifo,
 		//rx_ibhDrop2exhFifo,
 		m_axis_mem_write_cmd,
-		rx_readRequestFifo,
 		rxExh2msnTable_upd_req,
 		//rx_readReqAddr_pop_req,
 		rx_exhEventMetaFifo,
 		//rx_rethSift2mergerFifo,
-		//rx_exh2aethShiftFifo,
 		//rx_exhNoShiftFifo,
 		rx_pkgSplitTypeFifo,
 		rx_pkgShiftTypeFifo
@@ -550,14 +527,7 @@ void mrc_transport_protocol(
 		rx_ibhDrop2exhFifo,
 		rx_exh2rethShiftFifo,
 		rx_exh2rethImmShiftFifo,
-		rx_exh2aethShiftFifo,
 		rx_exhNoShiftFifo
-	);
-
-	handle_read_requests<INSTID>(	
-		rx_readRequestFifo,
-		rx_remoteMemCmd,
-		rx_readEvenFifo
 	);
 
 	//TODO is order important??
@@ -566,15 +536,12 @@ void mrc_transport_protocol(
 	// RETH: 16 bytes
 	//TODO not required for AXI_WIDTH == 64, also this seems to have a bug, this goes together with the hack in process_exh where we don't write the first word out
 //#if AXI_WIDTH != 64
-	rshiftWordByOctet<net_axis<WIDTH>, WIDTH,12, INSTID>(((RETH_SIZE%WIDTH)/8), rx_exh2rethShiftFifo, rx_rethSift2mergerFifo);
+	rshiftWordByOctet<net_axis<WIDTH>, WIDTH, 12, ((RETH_SIZE%WIDTH)/8), INSTID>(rx_exh2rethShiftFifo, rx_rethSift2mergerFifo);
 //#endif
-	// AETH: 4 bytes
-	rshiftWordByOctet<net_axis<WIDTH>, WIDTH,13, INSTID>(((AETH_SIZE%WIDTH)/8), rx_exh2aethShiftFifo, rx_aethSift2mergerFifo);
-
 	// RETH + ImmDt: 20 bytes (4 on 64/128-bit buses, where rx_process_exh already drops the full RETH words)
-	rshiftWordByOctet<net_axis<WIDTH>, WIDTH,14, INSTID>((((RETH_SIZE + IMMDT_SIZE)%WIDTH)/8), rx_exh2rethImmShiftFifo, rx_rethImmShift2mergerFifo);
+	rshiftWordByOctet<net_axis<WIDTH>, WIDTH, 14, (((RETH_SIZE + IMMDT_SIZE)%WIDTH)/8), INSTID>(rx_exh2rethImmShiftFifo, rx_rethImmShift2mergerFifo);
 
-	merge_rx_pkgs<WIDTH, INSTID>(rx_pkgShiftTypeFifo, rx_aethSift2mergerFifo, rx_rethSift2mergerFifo,
+	merge_rx_pkgs<WIDTH, INSTID>(rx_pkgShiftTypeFifo, rx_rethSift2mergerFifo,
 	                             rx_rethImmShift2mergerFifo, rx_exhNoShiftFifo, m_axis_mem_write_data);
 
 	// ------------------------------------------------------------------------------------------------
@@ -617,12 +584,12 @@ void mrc_transport_protocol(
 	stream_merger(tx_split2rethMerge, tx_appDataFifo, tx_rethMerge2rethShift);
 #endif
 	//merges and orders event going to TX path
-	meta_merger<INSTID>(rx_ackEventFifo, rx_readEvenFifo, tx_appMetaFifo, tx_ibhconnTable_req, tx_ibhMetaFifo, tx_exhMetaFifo);
-
+   	meta_merger<INSTID>(rx_ackEventFifo, tx_appMetaFifo, tx_ibhconnTable_req, tx_ibhMetaFifo, tx_exhMetaFifo);
+	
 	//Shift playload by 4 bytes for AETH (data from memory)
-	lshiftWordByOctet<WIDTH,12,INSTID>(((AETH_SIZE%WIDTH)/8), tx_split2aethShift, tx_aethShift2payFifo);
+	lshiftWordByOctet<WIDTH, 12, ((AETH_SIZE%WIDTH)/8), INSTID>(tx_split2aethShift, tx_aethShift2payFifo);
 	//Shift payload another 12 bytes for RETH (data from application)
-	lshiftWordByOctet<WIDTH,13,INSTID>(((RETH_SIZE%WIDTH)/8), tx_rethMerge2rethShift, tx_rethShift2payFifo);
+	lshiftWordByOctet<WIDTH, 13, ((RETH_SIZE%WIDTH)/8), INSTID>(tx_rethMerge2rethShift, tx_rethShift2payFifo);
 
 	//Generate EXH
 	generate_exh<WIDTH, INSTID>(	
@@ -642,7 +609,7 @@ void mrc_transport_protocol(
 	append_payload<WIDTH, INSTID>(tx_packetInfoFifo, tx_exh2payFifo, tx_aethShift2payFifo, tx_rethShift2payFifo, tx_rawPayFifo, tx_exh2shiftFifo);
 
 	// BTH: 12 bytes
-	lshiftWordByOctet<WIDTH,11,INSTID>(((BTH_SIZE%WIDTH)/8), tx_exh2shiftFifo, tx_shift2ibhFifo);
+	lshiftWordByOctet<WIDTH, 11, ((BTH_SIZE%WIDTH)/8), INSTID>(tx_exh2shiftFifo, tx_shift2ibhFifo);
 	generate_ibh<WIDTH, INSTID>(	
 		tx_ibhMetaFifo,
 		tx_dstQpFifo,
@@ -661,8 +628,7 @@ void mrc_transport_protocol(
 	tx_ipUdpMetaMerger(tx_connTable2ibh_rsp, tx_lengthFifo, m_axis_tx_meta, tx_dstQpFifo);
 
 	//merge read requests
-	mem_cmd_merger<WIDTH>(rx_remoteMemCmd, tx_localMemCmdFifo, m_axis_mem_read_cmd, tx_pkgInfoFifo);
-
+   	mem_cmd_merger<WIDTH>(tx_localMemCmdFifo, m_axis_mem_read_cmd, tx_pkgInfoFifo);
 
 	// ------------------------------------------------------------------------------------------------
 	// Data structures

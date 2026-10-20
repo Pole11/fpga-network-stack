@@ -440,13 +440,13 @@ void convertStreamWidth(hls::stream<net_axis<W> >& input, hls::stream<net_axis<W
 }
 
 // The 2nd template parameter is a hack to use this function multiple times
-template <typename T, int W, int whatever, int INSTID = 0>
-void rshiftWordByOctet(	uint16_t offset,
-						hls::stream<T>& input,
+template <typename T, int W, int whatever, int OFFSET, int INSTID = 0>
+void rshiftWordByOctet(	hls::stream<T>& input,
 						hls::stream<T>& output)
 {
 #pragma HLS inline off
 #pragma HLS pipeline II=1 //TODO this has a bug, the bug might come from how it is used
+	const uint16_t offset = OFFSET;
 
 	enum fsmStateType {PKG, REMAINDER};
 	static fsmStateType fsmState = PKG;
@@ -518,13 +518,13 @@ void rshiftWordByOctet(	uint16_t offset,
 }
 
 // The 2nd template parameter is a hack to use this function multiple times
-template <int W, int whatever, int INSTID = 0>
-void lshiftWordByOctet(	uint16_t offset,
-						hls::stream<net_axis<W> >& input,
+template <int W, int whatever, int OFFSET, int INSTID = 0>
+void lshiftWordByOctet(	hls::stream<net_axis<W> >& input,
 						hls::stream<net_axis<W> >& output)
 {
 #pragma HLS inline off
-#pragma HLS pipeline II=1
+
+	const uint16_t offset = OFFSET;
 	static bool ls_firstWord = true;
 	static bool ls_writeRemainder = false;
 	static net_axis<W> prevWord;

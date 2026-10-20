@@ -441,7 +441,6 @@ void rx_exh_fsm(
 	//stream<ap_uint<64> >& rx_readReqAddr_pop_rsp,
 	stream<ExHeader<WIDTH> >& headerInput,
 	stream<memCmd>& memoryWriteCmd,
-	stream<readRequest>& readRequestFifo,
 	stream<rxMsnReq>& rxExh2msnTable_upd_req,
 	//stream<mqPopReq>& rx_readReqAddr_pop_req,
 	stream<ackEvent>& rx_exhEventMetaFifo,
@@ -604,7 +603,6 @@ void rx_exh_payload(
 	stream<net_axis<WIDTH> >& input,
 	stream<net_axis<WIDTH> >& rx_exh2rethShiftFifo,
 	stream<net_axis<WIDTH> >& rx_exh2rethImmShiftFifo, 
-	stream<net_axis<WIDTH> >& rx_exh2aethShiftFifo,
 	stream<net_axis<WIDTH> >& rx_exhNoShiftFifo
 ) {
 #pragma HLS inline off
@@ -652,20 +650,9 @@ void rx_exh_payload(
 	} //switch
 }
 
-// this must be removed
-template <int INSTID = 0>
-void handle_read_requests(	
-	stream<readRequest>& requestIn,
-	stream<memCmdInternal>&	memoryReadCmd,
-	stream<event>& readEventFifo
-) {
-
-}
-
 template <int WIDTH, int INSTID = 0>
 void merge_rx_pkgs(	
 	stream<pkgShift>& rx_pkgShiftTypeFifo,
-	stream<net_axis<WIDTH> >& rx_aethSift2mergerFifo,
 	stream<net_axis<WIDTH> >& rx_rethSift2mergerFifo,
 	stream<net_axis<WIDTH> >& rx_rethImmSift2mergerFifo,
 	stream<net_axis<WIDTH> >& rx_NoSift2mergerFifo,
@@ -674,7 +661,7 @@ void merge_rx_pkgs(
 #pragma HLS inline off
 #pragma HLS pipeline II=1
 
-	enum mrpStateType{IDLE, FWD_AETH, FWD_RETH, FWD_RETH_IMM, FWD_NONE};
+	enum mrpStateType{IDLE, FWD_RETH, FWD_RETH_IMM, FWD_NONE};
 	static mrpStateType state = IDLE;
 
 	pkgShift shift;
@@ -686,18 +673,9 @@ void merge_rx_pkgs(
 		if (!rx_pkgShiftTypeFifo.empty())
 		{
 			rx_pkgShiftTypeFifo.read(shift);
-			if (shift.type == SHIFT_AETH)          state = FWD_AETH;
-			else if (shift.type == SHIFT_RETH)     state = FWD_RETH;
-			else if (shift.type == SHIFT_RETH_IMM) state = FWD_RETH_IMM;
-			else                                   state = FWD_NONE;
-		}
-		break;
-	case FWD_AETH:
-		if (!rx_aethSift2mergerFifo.empty())
-		{
-			rx_aethSift2mergerFifo.read(currWord);
-			m_axis_mem_write_data.write(currWord);
-			if (currWord.last) state = IDLE;
+			if (shift.type == SHIFT_RETH)     		state = FWD_RETH;
+			else if (shift.type == SHIFT_RETH_IMM) 	state = FWD_RETH_IMM;
+			else                                   	state = FWD_NONE;
 		}
 		break;
 	case FWD_RETH:

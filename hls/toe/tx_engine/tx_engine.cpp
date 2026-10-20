@@ -1851,7 +1851,7 @@ void tx_engine(	stream<extendedEvent>&			eventEng2txEng_event,
 #endif
 					txEng_tcpPkgBuffer0);
 
-	lshiftWordByOctet<WIDTH, 51>(((TCP_FULL_PSEUDO_HEADER_SIZE%WIDTH)/8), txEng_tcpPkgBuffer0, txEng_shift2pseudoFifo);
+	lshiftWordByOctet<WIDTH, 51, ((TCP_FULL_PSEUDO_HEADER_SIZE%WIDTH)/8)>(txEng_tcpPkgBuffer0, txEng_shift2pseudoFifo);
 
 	pseudoHeaderConstructionNew<WIDTH>(txEng_tcpMetaFifo, txEng_tcpTupleFifo, txEng_shift2pseudoFifo, txEng_tcpPkgBuffer1);
 	
@@ -1862,12 +1862,12 @@ void tx_engine(	stream<extendedEvent>&			eventEng2txEng_event,
 	remove_pseudo_header<WIDTH>(txEng_tcpPkgBuffer2, txEng_tcpPkgBuffer3);
 
 	//TODO merge these two shifts
-	rshiftWordByOctet<net_axis<WIDTH>, WIDTH, 53>(((96%WIDTH)/8), txEng_tcpPkgBuffer3, txEng_tcpPkgBuffer4);
+	rshiftWordByOctet<net_axis<WIDTH>, WIDTH, 53, ((96%WIDTH)/8)>(txEng_tcpPkgBuffer3, txEng_tcpPkgBuffer4);
 
 	insert_checksum<WIDTH>(txEng_tcpChecksumFifo, txEng_tcpPkgBuffer4, txEng_tcpPkgBuffer5);
 	
-	lshiftWordByOctet<WIDTH, 52>(((IPV4_HEADER_SIZE%WIDTH)/8), txEng_tcpPkgBuffer5, txEng_tcpPkgBuffer6);
-
+	lshiftWordByOctet<WIDTH, 52, ((IPV4_HEADER_SIZE%WIDTH)/8)>(txEng_tcpPkgBuffer5, txEng_tcpPkgBuffer6);
+	
 	generate_ipv4<WIDTH>(txEng_ipMetaFifo, txEng_ipTupleFifo, txEng_tcpPkgBuffer6, ipTxData);
 
 }

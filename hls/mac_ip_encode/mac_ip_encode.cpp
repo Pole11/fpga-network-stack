@@ -430,7 +430,7 @@ void mac_ip_encode( hls::stream<net_axis<WIDTH> >&			dataIn,
 	insert_ip_checksum(dataStreamBuffer1, checksumFifo, dataStreamBuffer2);
 
 	handle_arp_reply(arpTableIn, dataStreamBuffer2, headerFifo, dataStreamBuffer3, myMacAddress);
-	lshiftWordByOctet<WIDTH, 1>(((ETH_HEADER_SIZE%WIDTH)/8), dataStreamBuffer3, dataStreamBuffer4);
+	lshiftWordByOctet<WIDTH, 1, ((ETH_HEADER_SIZE%WIDTH)/8)>(dataStreamBuffer3, dataStreamBuffer4);
 	insert_ethernet_header(headerFifo, dataStreamBuffer4, dataOut);
 #endif
 	//generate_ethernet(dataStreamBuffer3, arpTableIn, dataOut, myMacAddress);

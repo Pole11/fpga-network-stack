@@ -283,7 +283,7 @@ void ipv4(		hls::stream<net_axis<WIDTH> >&	s_axis_rx_data,
 	/*
 	 * TX PATH
 	 */
-	ipv4_lshiftWordByOctet<WIDTH, 2>(((IPV4_HEADER_SIZE%WIDTH)/8), s_axis_tx_data, tx_shift2ipv4Fifo);
+	lshiftWordByOctet<WIDTH, 2, ((IPV4_HEADER_SIZE%WIDTH)/8)>(s_axis_tx_data, tx_shift2ipv4Fifo);
 	ipv4_generate_ipv4(s_axis_tx_meta, tx_shift2ipv4Fifo, m_axis_tx_data, local_ipv4_address, protocol);
 }
 

@@ -71,7 +71,6 @@ void local_req_handler(
 
 template <int WIDTH, int INSTID = 0>
 void mem_cmd_merger(
-	stream<memCmdInternal>& remoteReadRequests,
 	stream<memCmdInternal>& localReadRequests,
 	stream<memCmd>& out,
 	stream<pkgInfo>& pkgInfoFifo
@@ -81,12 +80,7 @@ void mem_cmd_merger(
 
 	memCmdInternal cmd;
 
-	if (!remoteReadRequests.empty())
-	{
-        std::cout << "[MEM CMD MERGER " << INSTID << "]: reading remote request" << std::endl;
-		remoteReadRequests.read(cmd);
-	}
-	else if (!localReadRequests.empty())
+	if (!localReadRequests.empty())
 	{
 		localReadRequests.read(cmd);
 
