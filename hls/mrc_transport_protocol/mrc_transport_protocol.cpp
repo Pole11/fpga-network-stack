@@ -208,8 +208,8 @@ void mrc_transport_protocol(
 	static stream<stateTableEntry> stateTable2qpi_rsp("stateTable2qpi_rsp");
 	static stream<reqStateReq> rxCtrl2stateTable_upd_req("rxCtrl2stateTable_upd_req");
 	static stream<reqStateRsp> stateTable2rxCtrl_rsp("stateTable2rxCtrl_rsp");
-	static stream<ap_uint<16> > stateTable2rxIbh_inv("stateTable2rxIbh_inv");
-	#pragma HLS STREAM depth=4 variable=stateTable2rxIbh_inv
+	//static stream<ap_uint<16> > stateTable2rxIbh_inv("stateTable2rxIbh_inv");
+	//#pragma HLS STREAM depth=4 variable=stateTable2rxIbh_inv
 	#pragma HLS STREAM depth=2 variable=rxCtrl2stateTable_upd_req
 	#pragma HLS STREAM depth=2 variable=stateTable2rxCtrl_rsp
 #if defined( __VITIS_HLS__)
@@ -491,7 +491,7 @@ void mrc_transport_protocol(
 		rx_ibhEventFifo,
 		rx_ibhDropFifo,
 		rx_ibhDropMetaFifo,
-		stateTable2rxIbh_inv,
+		//stateTable2rxIbh_inv,
 		//m_axis_rx_ack_meta,
 		regInvalidPsnDropCount
 	);
@@ -647,8 +647,9 @@ void mrc_transport_protocol(
  	                    stateTable2rxIbh_rsp,
 	                    stateTable2rxCtrl_rsp,
  	                    stateTable2txIbh_rsp,
- 	                    stateTable2qpi_rsp,
-	                    stateTable2rxIbh_inv);
+ 	                    stateTable2qpi_rsp
+	                   // stateTable2rxIbh_inv
+					);
 
 	msn_table<INSTID>(
 		rxExh2msnTable_upd_req,

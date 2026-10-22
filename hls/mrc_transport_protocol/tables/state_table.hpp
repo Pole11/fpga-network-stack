@@ -34,7 +34,7 @@ EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #define MRC_MPR 128
 
-//PSN, page 293, 307, 345
+// take a look at section 7.5, table 7-5
 struct stateTableEntry
 {
 	//window
@@ -43,7 +43,7 @@ struct stateTableEntry
 
 	// bit i representes resp_epsn + 1
 	ap_uint<MRC_MPR> resp_bitmap; // packets arrived
-	ap_uint<MRC_MPR> resp_lastmap; // the packet is the last of its message (LAST or ONLY), used for the MSN
+	ap_uint<MRC_MPR> resp_lastmap; // the packet is the last of its message (LAST or ONLY), used for the MSN inside the ACK (means how many messages are completed)
 	//ap_uint<MRC_MPR> resp_ackmap; // the packet had BTH.A = 1, used for the delayed ACK
 	bool resp_prev_ar; // an AR arrived and the bitmap has not been empty since (there are still holes)
 	
@@ -186,8 +186,8 @@ void state_table(
 	hls::stream<rxStateRsp>& stateTable2rxIbh_rsp,
 	hls::stream<reqStateRsp>& stateTable2rxCtrl_rsp,
 	hls::stream<stateTableEntry>& stateTable2txIbh_rsp,
-	hls::stream<stateTableEntry>& stateTable2qpi_rsp,
-	hls::stream<ap_uint<16> >& stateTable2rxIbh_inv // invalidate cache line
+	hls::stream<stateTableEntry>& stateTable2qpi_rsp
+	//hls::stream<ap_uint<16> >& stateTable2rxIbh_inv // invalidate cache line
 ) {
 #pragma HLS PIPELINE II=1
 #pragma HLS INLINE off
@@ -296,7 +296,7 @@ void state_table(
 				state_table[ifRequest.qpn].resp_lastmap = 0;
 				//state_table[ifRequest.qpn].resp_ackmap  = 0;
 				state_table[ifRequest.qpn].resp_prev_ar = false;
-				stateTable2rxIbh_inv.write(ifRequest.qpn);
+				//stateTable2rxIbh_inv.write(ifRequest.qpn);
 			} else {
 				state_table[ifRequest.qpn].req_next_psn = ifRequest.remote_psn;
 				state_table[ifRequest.qpn].req_old_unack = ifRequest.remote_psn;

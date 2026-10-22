@@ -20,21 +20,20 @@ The four METH bytes have disappeared, and the RETH now starts at byte 0. That's 
 It is only used if METH (4 Bytes) is present and TSETH not (4 Bytes too)
 */
 template <int W>
-net_axis<W> mrcJoin(net_axis<W>& lo, net_axis<W>& hi, ap_uint<4> offset)
+net_axis<W> mrcJoin(net_axis<W>& lo, net_axis<W>& hi, bool hasTseth)
 {
 #pragma HLS inline
-	ap_uint<2*W>   data;
-	ap_uint<2*W/8> keep;
-	data(W-1, 0)       = lo.data;
-	data(2*W-1, W)     = hi.data;
-	keep(W/8-1, 0)     = lo.keep;
-	keep(2*W/8-1, W/8) = hi.keep;
-	data >>= (8 * offset);
-	keep >>= offset;
-
 	net_axis<W> w;
-	w.data = data(W-1, 0);
-	w.keep = keep(W/8-1, 0);
+	if (hasTseth)
+	{
+		w.data = (hi.data(63, 0), lo.data(W-1, 64));
+		w.keep = (hi.keep(7, 0),  lo.keep(W/8-1, 8));
+	}
+	else
+	{
+		w.data = (hi.data(31, 0), lo.data(W-1, 32));
+		w.keep = (hi.keep(3, 0),  lo.keep(W/8-1, 4));
+	}
 	w.last = 0;
 	return w;
 }
@@ -116,7 +115,7 @@ void rx_strip_mrc_eth(
 			}
 			else if (currWord.last)               // whole packet in one word
 			{
-				sendWord = mrcJoin(currWord, emptyWord, offset);
+				sendWord = mrcJoin(currWord, emptyWord, hasTseth);
 				sendWord.last = 1;
 				output.write(sendWord);
 				DBG_WORD("STRIP MRC headers OUT", sendWord);
@@ -150,11 +149,13 @@ void rx_strip_mrc_eth(
 			}
 			else
 			{
-				sendWord = mrcJoin(prevWord, currWord, offset);
+				sendWord = mrcJoin(prevWord, currWord, hasTseth);
 				if (currWord.last)
 				{
 					// bytes of currWord beyond 'offset' don't fit and need one more output word
-					bool remainder = ((currWord.keep >> offset) != 0);
+					bool remainder = hasTseth 
+							? (currWord.keep(WIDTH/8-1, 8) != 0)
+                          	: (currWord.keep(WIDTH/8-1, 4) != 0);
 					sendWord.last = !remainder;
 					state = remainder ? REMAINDER : META;
 				}
@@ -166,7 +167,7 @@ void rx_strip_mrc_eth(
 		break;
 
 	case REMAINDER:
-		sendWord = mrcJoin(prevWord, emptyWord, offset);
+		sendWord = mrcJoin(prevWord, emptyWord, hasTseth);
 		sendWord.last = 1;
 		output.write(sendWord);
 		DBG_WORD("STRIP MRC headers OUT", sendWord);
@@ -300,15 +301,15 @@ void rx_ibh_fsm(
 #endif
 	stream<ibhMeta>& metaIn, 					// contains op_code, partition_key, dest_qp, psn, validPSN, numPkg, ackReq, rtx, ts, msnInc, cack
 	stream<exhMeta>& exhMetaFifo,				// only numPkg, can be removed
-	stream<rxStateRsp>& stateTable_rsp,			// contains epsn, oldest_outstanding_psn (is it useful?), max_forward (is it useful?), retryCounter, bitmap, lastmap, (ackmap) prevAr
+	stream<rxStateRsp>& stateTable_rsp,			// contains epsn, oldest_outstanding_psn (is it useful?), max_forward (is it useful?), retryCounter, bitmap, lastmap, ackmap or prevAr
 	
-	stream<rxStateReq>& stateTable_upd_req,		// contains qpn, epsn, retryCounter, isResponse, write, bitmap, lastmap, (ackmap) prevAr
+	stream<rxStateReq>& stateTable_upd_req,		// contains qpn, epsn, retryCounter, isResponse, write, bitmap, lastmap, ackmap or prevAr
 	stream<ibhMeta>& metaOut,					// contains op_code, partition_key, dest_qp, psn, validPSN, numPkg, ackReq, rtx, ts, msnInc, cack
 	stream<ackEvent>& ibhEventFifo,				// contains qpn, psn, validPsn, isNak
 	stream<bool>& ibhDropFifo,
 	stream<fwdPolicy>& ibhDropMetaFifo,			// contains isDrop, ackOnly
 	//stream<ackMeta>& m_axis_rx_ack_meta,
-	stream<ap_uint<16> >& stateTableInv,		// qpn of every QP set up again: its cached state is stale
+	//stream<ap_uint<16> >& stateTableInv,		// qpn of every QP set up again: its cached state is stale
 	ap_uint<32>& regInvalidPsnDropCount
 ) {
 #pragma HLS inline off
@@ -324,36 +325,40 @@ void rx_ibh_fsm(
 	rxStateRsp qpState;
 
 	// trying to implement a cache, probably I should have tested the latency before
-	static bool        cacheValid = false; 
-	static ap_uint<16> cacheQp;
-	static rxStateRsp  cacheState;
+	//static bool        cacheValid = false; 
+	//static ap_uint<16> cacheQp;
+	//static rxStateRsp  cacheState;
 	static bool        hit;
 
 	switch(fsmState)
 	{
 	case LOAD:
-		if (!stateTableInv.empty())
-		{
-			if (stateTableInv.read() == cacheQp)
-				cacheValid = false;
-		}
-		else if (!metaIn.empty() && !exhMetaFifo.empty())
+		//if (!stateTableInv.empty())
+		//{
+		//	if (stateTableInv.read() == cacheQp)
+		//		cacheValid = false;
+		//}
+		//else if (!metaIn.empty() && !exhMetaFifo.empty())
+		if (!metaIn.empty() && !exhMetaFifo.empty())
 		{
 			metaIn.read(meta);
 			exhMetaFifo.read(emeta);
 			isResponse = checkIfResponse(meta.op_code);
-			hit = cacheValid && cacheQp == meta.dest_qp(15, 0);
-			if (!hit)
+			//hit = cacheValid && cacheQp == meta.dest_qp(15, 0);
+			//if (!hit)
 				stateTable_upd_req.write(rxStateReq(meta.dest_qp, isResponse));
 			fsmState = PROCESS;
 		}
 		break;
 	case PROCESS:
 	{
-		if (hit || !stateTable_rsp.empty())
+		if (/*hit || */!stateTable_rsp.empty())
 		{
-			if (hit) qpState = cacheState;
-			else     stateTable_rsp.read(qpState);
+			//if (hit) 
+			//	qpState = cacheState;
+			//else 
+				stateTable_rsp.read(qpState);
+			     
 
 			ap_uint<24> d = meta.psn - qpState.epsn; // distance from epsn
 
@@ -365,40 +370,44 @@ void rx_ibh_fsm(
 
 			if (d < MRC_MPR && !qpState.bitmap[d]) // packet is inside the window
 			{
-				// drop drop, simply forward the payload to memory!
 				ibhDropFifo.write(false);
 				ibhDropMetaFifo.write(fwdPolicy(false, false));
 
-				// love this:
-				qpState.bitmap[d]  = 1; // bitmap track who arrived
-				qpState.lastmap[d] = (meta.op_code == MRC_RDMA_WRITE_LAST     || meta.op_code == MRC_RDMA_WRITE_ONLY ||
-									meta.op_code == MRC_RDMA_WRITE_LAST_IMM || meta.op_code == MRC_RDMA_WRITE_ONLY_IMM); // lastmap tracks who is last/only
+				qpState.bitmap[d(6, 0)]  = 1;
+				qpState.lastmap[d(6, 0)] = (meta.op_code == MRC_RDMA_WRITE_LAST     || meta.op_code == MRC_RDMA_WRITE_ONLY ||
+											meta.op_code == MRC_RDMA_WRITE_LAST_IMM || meta.op_code == MRC_RDMA_WRITE_ONLY_IMM);
+				// ackmap
+				//qpState.ackmap[d(6, 0)]  = meta.ackReq; // ackmap tracks who has an ack req
 
-				ap_uint<8> n = MRC_MPR; // n is the index of the lowest zero in bitmap, the lowest hole
-				for (int i = MRC_MPR - 1; i >= 0; i--)
-				{
-				#pragma HLS unroll
-					if (!qpState.bitmap[i]) n = i;
-				}
-
+				ap_uint<MRC_MPR> mask = qpState.bitmap & ~(qpState.bitmap + 1); // bits below the lowest hole
+				ap_uint<8> n = 0;
 				meta.msnInc = 0;
+				// ackmap
+				//meta.ackReq = false; 
 				for (int i = 0; i < MRC_MPR; i++)
 				{
 				#pragma HLS unroll
-					if (i < n && qpState.lastmap[i]) meta.msnInc++; // count how many message ended
+					n           += mask[i];
+					meta.msnInc += (mask[i] & qpState.lastmap[i]);
+					// ackmap
+					//if (mask[i] && qpState.ackmap[i])  meta.ackReq = true; // set meta.ackReq to true in the case that any of those asked for an ACK
 				}
+
+				qpState.prevAr = qpState.prevAr || meta.ackReq;
+				meta.ackReq    = qpState.prevAr && qpState.bitmap[0];
+				qpState.prevAr = qpState.prevAr && (qpState.bitmap & ~mask) != 0;
 
 				qpState.epsn    += n;
 				qpState.bitmap  >>= n;
 				qpState.lastmap >>= n;
+				// ackmap
+				//qpState.ackmap  >>= n;
 				meta.cack = qpState.epsn - 1;
 
-				qpState.prevAr = qpState.prevAr || meta.ackReq;          // an AR (also this packet's) is pending
-				meta.ackReq    = qpState.prevAr && n != 0;               // cack advanced while an AR is pending: ACK
-				qpState.prevAr = qpState.prevAr && qpState.bitmap != 0;  // bitmap empty, cack == max_rcv_psn: every AR is covered
-
 				metaOut.write(meta);
+				// ackmap
 				stateTable_upd_req.write(rxStateReq(meta.dest_qp, qpState.epsn, qpState.bitmap, qpState.lastmap, qpState.prevAr, isResponse));
+				//stateTable_upd_req.write(rxStateReq(meta.dest_qp, qpState.epsn, qpState.bitmap, qpState.lastmap, qpState.ackmap, isResponse));
 			}
 			else if (d < MRC_MPR || d > 0x800000) // duplicate ( bit is already set or are behind the window by less than 0x800000)
 			{
@@ -420,9 +429,9 @@ void rx_ibh_fsm(
 				ibhDropMetaFifo.write(fwdPolicy(true, false));
 			}
 
-			cacheState = qpState;
-			cacheQp    = meta.dest_qp(15, 0);
-			cacheValid = true;
+			//cacheState = qpState;
+			//cacheQp    = meta.dest_qp(15, 0);
+			//cacheValid = true;
 			fsmState   = LOAD;
 		}
 		break;
