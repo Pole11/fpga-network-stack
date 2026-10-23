@@ -389,8 +389,9 @@ struct mrcEthMeta
 {
 	mrcOpCode op_code;
 	bool     ts;
+	bool     req; // checkIfMrcRequest(op_code), computed by the producer
 	mrcEthMeta() {}
-	mrcEthMeta(mrcOpCode op, bool ts) : op_code(op), ts(ts) {}
+	mrcEthMeta(mrcOpCode op, bool ts) : op_code(op), ts(ts), req(checkIfMrcRequest(op)) {}
 };
 
 // rx_strip_mrc_eth -> rx_process_exh (replaces the bare mrcOpCode it used to receive)

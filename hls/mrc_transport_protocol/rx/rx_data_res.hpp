@@ -51,7 +51,7 @@ void rx_strip_mrc_eth(
 	stream<net_axis<WIDTH> >& output
 ) {
 #pragma HLS inline off
-#pragma HLS pipeline II=1
+#pragma HLS pipeline II=1 
 
 	enum fsmStateType {META, FIRST, BODY, REMAINDER};
 	static fsmStateType state = META;
@@ -75,10 +75,11 @@ void rx_strip_mrc_eth(
 		{
 			metaIn.read(inMeta);
 			opCode   = inMeta.op_code;
-			bool req = checkIfMrcRequest(inMeta.op_code);
-			hasTseth = req && inMeta.ts;          // ts is only meaningful on requests
-			offset   = req ? (hasTseth ? 8 : 4) : 0;
+			hasTseth = inMeta.req && inMeta.ts; // ts is only meaningful on requests
+			offset   = inMeta.req ? (hasTseth ? 8 : 4) : 0;
 			state    = FIRST;
+
+			std::cout << "[RX STRIP MRC ETH " << INSTID << "] offset:" << offset << std::endl;
 		}
 		break;
 
@@ -94,6 +95,7 @@ void rx_strip_mrc_eth(
 			{
 				// METH: bytes 0-1 RQMSN, bytes 2-3 MSN (big-endian on the wire)
 				// METH is always present on a request packet
+				// it gets set also if the packet has no header, fix this!
 				out.mrc.hasMeth = true; // TODO: somehow bind it to req bit?
 				out.mrc.rqmsn = reverse((ap_uint<16>) currWord.data(15, 0));
 				out.mrc.msn   = reverse((ap_uint<16>) currWord.data(31, 16));
@@ -153,9 +155,11 @@ void rx_strip_mrc_eth(
 				if (currWord.last)
 				{
 					// bytes of currWord beyond 'offset' don't fit and need one more output word
-					bool remainder = hasTseth 
-							? (currWord.keep(WIDTH/8-1, 8) != 0)
-                          	: (currWord.keep(WIDTH/8-1, 4) != 0);
+					// bool remainder = hasTseth 
+					// 		? (currWord.keep(WIDTH/8-1, 8) != 0)
+                    //       	: (currWord.keep(WIDTH/8-1, 4) != 0);
+					// you probably don't need to read all keep values, 1 is enough 
+					bool remainder = hasTseth ? currWord.keep[8] : currWord.keep[4];
 					sendWord.last = !remainder;
 					state = remainder ? REMAINDER : META;
 				}
@@ -177,10 +181,10 @@ void rx_strip_mrc_eth(
 }
 
 template <int WIDTH, int INSTID = 0>
-void rx_process_exh(
+void rx_process_exh( // probably it is useless now ... 
 	stream<net_axis<WIDTH> >& input, // packet without BTH, without METH and without TSETH, it starts with RETH
 	stream<exhOpMeta>& metaIn,
-	stream<exhMeta>& exhMetaFifo, // the isNak parameter must be removed
+	stream<exhMeta>& exhMetaFifo, // probably useless ?!
 	stream<ExHeader<WIDTH> >& metaOut,
 	stream<net_axis<WIDTH> >& output
 ) {
@@ -192,12 +196,11 @@ void rx_process_exh(
 	static fsmStateType state = META;
 
 	static RdmaExHeader<WIDTH> rdmaHeader;
-	static AckExHeader<WIDTH> ackHeader;
 	static packetHeader<WIDTH, RETH_SIZE + IMMDT_SIZE> rethImmHeader; // NEW: RETH + ImmDt, *_IMM only
 
 	static bool metaWritten = false;
-	static bool rethParsed  = false; // NEW
-	static bool hasImmDt    = false; // NEW
+	static bool rethParsed  = false;
+	static bool hasImmDt    = false;
 
 	net_axis<WIDTH> currWord;
 	static exhOpMeta opMeta;
@@ -214,14 +217,8 @@ void rx_process_exh(
 			rethParsed  = false;
 			hasImmDt    = checkIfImmDt(opCode);
 
-			if (checkIfRethHeader(opCode))
-			{
-				state = RETH_HEADER;
-			}
-			else
-			{
-				state = NO_HEADER;
-			}
+			state = opMeta.mrc.hasMeth ? RETH_HEADER : NO_HEADER; // every MRC request carries a RETH
+			std::cout << "[RX PROCESS EXH " << INSTID << "] state:" << state << std::endl;
 		}
 		break;
 	case RETH_HEADER:
@@ -255,6 +252,7 @@ void rx_process_exh(
 				if (hasImmDt)
 				{
 					// ImmDt: the 4 bytes right after the RETH, big-endian
+					// on a malformed IMM packet that ends before the ImmDt is complete, the meta is still written
 					exh.mrc.hasImmDt = true;
 					exh.mrc.immDt    = reverse((ap_uint<IMMDT_SIZE>) rethImmHeader.header(RETH_SIZE + IMMDT_SIZE - 1, RETH_SIZE));
 				}
@@ -301,9 +299,9 @@ void rx_ibh_fsm(
 #endif
 	stream<ibhMeta>& metaIn, 					// contains op_code, partition_key, dest_qp, psn, validPSN, numPkg, ackReq, rtx, ts, msnInc, cack
 	stream<exhMeta>& exhMetaFifo,				// only numPkg, can be removed
-	stream<rxStateRsp>& stateTable_rsp,			// contains epsn, oldest_outstanding_psn (is it useful?), max_forward (is it useful?), retryCounter, bitmap, lastmap, ackmap or prevAr
+	stream<rxStateRsp>& stateTable_rsp,			// contains epsn, oldest_outstanding_psn (is it useful?), max_forward (is it useful?), retryCounter, bitmap, lastmap, prevAr
 	
-	stream<rxStateReq>& stateTable_upd_req,		// contains qpn, epsn, retryCounter, isResponse, write, bitmap, lastmap, ackmap or prevAr
+	stream<rxStateReq>& stateTable_upd_req,		// contains qpn, epsn, retryCounter, isResponse, write, bitmap, lastmap, prevAr
 	stream<ibhMeta>& metaOut,					// contains op_code, partition_key, dest_qp, psn, validPSN, numPkg, ackReq, rtx, ts, msnInc, cack
 	stream<ackEvent>& ibhEventFifo,				// contains qpn, psn, validPsn, isNak
 	stream<bool>& ibhDropFifo,
@@ -376,21 +374,15 @@ void rx_ibh_fsm(
 				qpState.bitmap[d(6, 0)]  = 1;
 				qpState.lastmap[d(6, 0)] = (meta.op_code == MRC_RDMA_WRITE_LAST     || meta.op_code == MRC_RDMA_WRITE_ONLY ||
 											meta.op_code == MRC_RDMA_WRITE_LAST_IMM || meta.op_code == MRC_RDMA_WRITE_ONLY_IMM);
-				// ackmap
-				//qpState.ackmap[d(6, 0)]  = meta.ackReq; // ackmap tracks who has an ack req
 
 				ap_uint<MRC_MPR> mask = qpState.bitmap & ~(qpState.bitmap + 1); // bits below the lowest hole
 				ap_uint<8> n = 0;
 				meta.msnInc = 0;
-				// ackmap
-				//meta.ackReq = false; 
 				for (int i = 0; i < MRC_MPR; i++)
 				{
 				#pragma HLS unroll
 					n           += mask[i];
 					meta.msnInc += (mask[i] & qpState.lastmap[i]);
-					// ackmap
-					//if (mask[i] && qpState.ackmap[i])  meta.ackReq = true; // set meta.ackReq to true in the case that any of those asked for an ACK
 				}
 
 				qpState.prevAr = qpState.prevAr || meta.ackReq;
@@ -400,14 +392,10 @@ void rx_ibh_fsm(
 				qpState.epsn    += n;
 				qpState.bitmap  >>= n;
 				qpState.lastmap >>= n;
-				// ackmap
-				//qpState.ackmap  >>= n;
 				meta.cack = qpState.epsn - 1;
 
 				metaOut.write(meta);
-				// ackmap
 				stateTable_upd_req.write(rxStateReq(meta.dest_qp, qpState.epsn, qpState.bitmap, qpState.lastmap, qpState.prevAr, isResponse));
-				//stateTable_upd_req.write(rxStateReq(meta.dest_qp, qpState.epsn, qpState.bitmap, qpState.lastmap, qpState.ackmap, isResponse));
 			}
 			else if (d < MRC_MPR || d > 0x800000) // duplicate ( bit is already set or are behind the window by less than 0x800000)
 			{

@@ -44,7 +44,6 @@ struct stateTableEntry
 	// bit i representes resp_epsn + 1
 	ap_uint<MRC_MPR> resp_bitmap; // packets arrived
 	ap_uint<MRC_MPR> resp_lastmap; // the packet is the last of its message (LAST or ONLY), used for the MSN inside the ACK (means how many messages are completed)
-	//ap_uint<MRC_MPR> resp_ackmap; // the packet had BTH.A = 1, used for the delayed ACK
 	bool resp_prev_ar; // an AR arrived and the bitmap has not been empty since (there are still holes)
 	
 	ap_uint<24> req_next_psn;
@@ -83,14 +82,11 @@ struct rxStateReq
 	bool		write;
 	ap_uint<MRC_MPR> bitmap;
 	ap_uint<MRC_MPR> lastmap;
-	//ap_uint<MRC_MPR> ackmap;
 	bool prevAr;
 
 	rxStateReq() :isResponse(false), write(false) {}
 	rxStateReq(ap_uint<24> qpn, bool isRsp)
 		:qpn(qpn), isResponse(isRsp), write(false) {}
-	//rxStateReq(ap_uint<16> qpn, ap_uint<24> psn, ap_uint<MRC_MPR> bitmap, ap_uint<MRC_MPR> lastmap, ap_uint<MRC_MPR> ackmap, bool isRsp)
-	//	:qpn(qpn), epsn(psn), retryCounter(0x7), isResponse(isRsp), write(true), bitmap(bitmap), lastmap(lastmap), ackmap(ackmap) {}
 	rxStateReq(ap_uint<16> qpn, ap_uint<24> psn, ap_uint<MRC_MPR> bitmap, ap_uint<MRC_MPR> lastmap, bool prevAr, bool isRsp)
 		:qpn(qpn), epsn(psn), retryCounter(0x7), isResponse(isRsp), write(true), bitmap(bitmap), lastmap(lastmap), prevAr(prevAr) {}
 };
@@ -142,7 +138,6 @@ struct rxStateRsp
 
 	ap_uint<MRC_MPR> bitmap;
 	ap_uint<MRC_MPR> lastmap;
-	//ap_uint<MRC_MPR> ackmap;
 	bool prevAr;
 
 	rxStateRsp() {}
@@ -223,7 +218,6 @@ void state_table(
 				//state_table[rxRequest.qpn].sendNAK = rxRequest.epsn;
 				state_table[rxRequest.qpn].resp_bitmap  = rxRequest.bitmap;
 				state_table[rxRequest.qpn].resp_lastmap = rxRequest.lastmap;
-				//state_table[rxRequest.qpn].resp_ackmap  = rxRequest.ackmap;
 				state_table[rxRequest.qpn].resp_prev_ar = rxRequest.prevAr;
 			}
 		}
@@ -240,7 +234,6 @@ void state_table(
 				rxStateRsp rsp(entry.resp_epsn, entry.resp_old_outstanding, entry.resp_epsn, entry.retryCounter);
 				rsp.bitmap  = entry.resp_bitmap;
 				rsp.lastmap = entry.resp_lastmap;
-				//rsp.ackmap  = entry.resp_ackmap;
 				rsp.prevAr = entry.resp_prev_ar;
 				stateTable2rxIbh_rsp.write(rsp);
 			}
@@ -294,7 +287,6 @@ void state_table(
 				
 				state_table[ifRequest.qpn].resp_bitmap  = 0;
 				state_table[ifRequest.qpn].resp_lastmap = 0;
-				//state_table[ifRequest.qpn].resp_ackmap  = 0;
 				state_table[ifRequest.qpn].resp_prev_ar = false;
 				//stateTable2rxIbh_inv.write(ifRequest.qpn);
 			} else {
