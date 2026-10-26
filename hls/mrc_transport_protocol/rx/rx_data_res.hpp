@@ -298,6 +298,7 @@ void rx_ibh_fsm(
     stream<psnPkg>&	m_axis_dbg,
 #endif
 	stream<ibhMeta>& metaIn, 					// contains op_code, partition_key, dest_qp, psn, validPSN, numPkg, ackReq, rtx, ts, msnInc, cack
+	stream<ap_uint<16> >& udpLenIn,
 	stream<exhMeta>& exhMetaFifo,				// only numPkg, can be removed
 	stream<rxStateRsp>& stateTable_rsp,			// contains epsn, oldest_outstanding_psn (is it useful?), max_forward (is it useful?), retryCounter, bitmap, lastmap, prevAr
 	
@@ -350,12 +351,14 @@ void rx_ibh_fsm(
 		break;
 	case PROCESS:
 	{
-		if (/*hit || */!stateTable_rsp.empty())
+		if (/*hit || */!stateTable_rsp.empty() && !udpLenIn.empty())
 		{
 			//if (hit) 
 			//	qpState = cacheState;
 			//else 
 				stateTable_rsp.read(qpState);
+
+			ap_uint<16> udpLen = udpLenIn.read();
 			     
 
 			ap_uint<24> d = meta.psn - qpState.epsn; // distance from epsn
@@ -366,10 +369,16 @@ void rx_ibh_fsm(
 			m_axis_dbg.write(psnPkg(meta.op_code, meta.psn, qpState.epsn, 0));
 #endif
 
+			qpState.rcvdBytes      += udpLen + 40; // nominal_pktsize (8.3.1)
+			qpState.sackTriggerCnt += (udpLen > 1024) ? udpLen : (ap_uint<16>)1024; // MIN_ACK_PACKET_SIZE
+
 			if (d < MRC_MPR && !qpState.bitmap[d]) // packet is inside the window
 			{
 				ibhDropFifo.write(false);
 				ibhDropMetaFifo.write(fwdPolicy(false, false));
+
+				if (d >= (ap_uint<24>)(qpState.maxRcvPsn - qpState.epsn + 1))
+					qpState.maxRcvPsn = meta.psn;
 
 				qpState.bitmap[d(6, 0)]  = 1;
 				qpState.lastmap[d(6, 0)] = (meta.op_code == MRC_RDMA_WRITE_LAST     || meta.op_code == MRC_RDMA_WRITE_ONLY ||
@@ -378,24 +387,42 @@ void rx_ibh_fsm(
 				ap_uint<MRC_MPR> mask = qpState.bitmap & ~(qpState.bitmap + 1); // bits below the lowest hole
 				ap_uint<8> n = 0;
 				meta.msnInc = 0;
+				meta.oooCount = 0;
 				for (int i = 0; i < MRC_MPR; i++)
 				{
 				#pragma HLS unroll
-					n           += mask[i];
-					meta.msnInc += (mask[i] & qpState.lastmap[i]);
+					n           	+= mask[i];
+					meta.msnInc 	+= (mask[i] & qpState.lastmap[i]);
+					meta.oooCount 	+= (qpState.bitmap[i] & !mask[i]);
 				}
-
-				qpState.prevAr = qpState.prevAr || meta.ackReq;
-				meta.ackReq    = qpState.prevAr && qpState.bitmap[0];
-				qpState.prevAr = qpState.prevAr && (qpState.bitmap & ~mask) != 0;
 
 				qpState.epsn    += n;
 				qpState.bitmap  >>= n;
 				qpState.lastmap >>= n;
 				meta.cack = qpState.epsn - 1;
 
+				qpState.prevAr = qpState.prevAr || meta.ackReq;
+				meta.ackReq    = meta.ackReq || meta.rtx || (qpState.prevAr && meta.cack == qpState.maxRcvPsn)
+				                 || qpState.sackTriggerCnt > MRC_SACK_GEN_THRESHOLD;
+				qpState.prevAr = qpState.prevAr && meta.cack != qpState.maxRcvPsn;
+
+				if ((ap_int<24>)(qpState.lowestUnsackedPsn - meta.cack) < 0)
+					qpState.lowestUnsackedPsn = meta.cack;
+				else if (n == 0 && !meta.ackReq && (ap_int<24>)(meta.psn - qpState.lowestUnsackedPsn) < 0)
+					qpState.lowestUnsackedPsn = meta.psn;
+
+				if (meta.ackReq || n != 0)
+				{
+					if ((ap_int<24>)(qpState.maxRcvPsn - qpState.lowestUnsackedPsn) <= 64)
+						qpState.lowestUnsackedPsn = ((ap_int<24>)(qpState.maxRcvPsn - 64 - meta.cack) > 0) ?
+						                            (ap_uint<24>)(qpState.maxRcvPsn - 64) : meta.cack;
+					meta.sackOffset = qpState.lowestUnsackedPsn - meta.cack;
+					qpState.lowestUnsackedPsn += 64;
+					qpState.sackTriggerCnt = 0;
+				}
+
 				metaOut.write(meta);
-				stateTable_upd_req.write(rxStateReq(meta.dest_qp, qpState.epsn, qpState.bitmap, qpState.lastmap, qpState.prevAr, isResponse));
+				stateTable_upd_req.write(rxStateReq(meta.dest_qp, qpState));
 			}
 			else if (d < MRC_MPR || d > 0x800000) // duplicate ( bit is already set or are behind the window by less than 0x800000)
 			{
@@ -407,6 +434,9 @@ void rx_ibh_fsm(
 				// drop payload
 				ibhDropFifo.write(true);
 				ibhDropMetaFifo.write(fwdPolicy(false, true)); // no drop, yes ack
+
+				qpState.sackTriggerCnt = 0;
+				stateTable_upd_req.write(rxStateReq(meta.dest_qp, qpState));
 			}
 			else // out of window, silently drop it
 			{
@@ -703,6 +733,7 @@ void merge_rx_pkgs(
 }
 
 // UDP meta handler
+// is it really usefull in this form?
 // TODO maybe all ACKS should be triggered by ibhFSM?? what is the guarantee we should/have to give
 // TODO this should become a BRAM, storage type of thing
 template <int WIDTH, int INSTID = 0>
@@ -721,7 +752,6 @@ void ipUdpMetaHandler(
 	ipUdpMeta meta;
 	ExHeader<WIDTH> header;
 	fwdPolicy policy;
-	bool isDrop;
 
 	if (!input.empty() && !exHeaderInput.empty() && !dropMetaIn.empty())
 	{
@@ -735,7 +765,6 @@ void ipUdpMetaHandler(
 				//remcrc_lengthFifo.write(meta.length - (8 + 12 + 4)); //UDP + BTH + CRC
 				exh_lengthFifo.write(meta.length);
 				exHeaderOutput.write(header);
-
 			}
 			//output.write(dstTuple(meta.their_address, meta.their_port));
 		}

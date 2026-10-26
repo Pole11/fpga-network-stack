@@ -52,6 +52,9 @@ using namespace hls;
 #define DBG_WORD(stage, w) do {} while (0)
 #endif
 
+#define MRC_MPR 128
+#define MRC_SACK_GEN_THRESHOLD 16384
+
 const uint32_t BTH_SIZE = 96;
 const uint32_t RETH_SIZE = 128;
 const uint32_t AETH_SIZE = 32;
@@ -482,6 +485,10 @@ struct ibhMeta
 	bool        ts;       // BTH.ts
 	ap_uint<8>  msnInc;	// how many packets become complete with this packet, is 0 to 128
 	ap_uint<24> cack;	// the new cack_psn, which is the one the ACK must carry
+	// change the size of those two below according to the defines
+	ap_uint<16> sackOffset; // sack_base - cack (7.5.2.2), valid when ackReq
+	ap_uint<8>  oooCount;   // rx_ooo_count, max 127 with MPR = 128
+
 	ibhMeta()
 		:op_code(MRC_ACK), ackReq(false), rtx(false), ts(false) {}
 	ibhMeta(mrcOpCode op, ap_uint<16> key, ap_uint<24> qp)

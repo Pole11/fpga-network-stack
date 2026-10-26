@@ -32,8 +32,6 @@ EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "../mrc_transport_protocol.hpp"
 #include <rocev2_config.hpp> //defines MAX_QPS
 
-#define MRC_MPR 128
-
 // take a look at section 7.5, table 7-5
 struct stateTableEntry
 {
@@ -41,11 +39,16 @@ struct stateTableEntry
 	ap_uint<24> resp_epsn;
 	ap_uint<24> resp_old_outstanding;
 
-	// bit i representes resp_epsn + 1
+	// bit 0 is epsn
 	ap_uint<MRC_MPR> resp_bitmap; // packets arrived
 	ap_uint<MRC_MPR> resp_lastmap; // the packet is the last of its message (LAST or ONLY), used for the MSN inside the ACK (means how many messages are completed)
 	bool resp_prev_ar; // an AR arrived and the bitmap has not been empty since (there are still holes)
 	
+	ap_uint<24> resp_max_rcv_psn;
+	ap_uint<24> resp_lowest_unsacked_psn;
+	ap_uint<32> resp_rcvd_bytes;
+	ap_uint<24> resp_sack_trigger_cnt;
+
 	ap_uint<24> req_next_psn;
 	ap_uint<24> req_old_unack;
 	ap_uint<24> req_old_valid; //required? can be computed?
@@ -73,6 +76,33 @@ struct ifStateReq
 		:qpn(qpn), remote_psn(rpsn), selective_update_remote_psn(selective_update_rpsn), write(true) {}
 };
 
+struct rxStateRsp
+{
+	//window
+	ap_uint<24> epsn;
+	ap_uint<24> oldest_outstanding_psn;
+	ap_uint<24> max_forward; //used for reponses, page 346
+
+	ap_uint<3>	retryCounter;
+
+	ap_uint<MRC_MPR> bitmap;
+	ap_uint<MRC_MPR> lastmap;
+	bool prevAr;
+
+	ap_uint<24> maxRcvPsn;
+	ap_uint<24> lowestUnsackedPsn;
+	ap_uint<32> rcvdBytes;
+	ap_uint<24> sackTriggerCnt;
+
+	rxStateRsp() {}
+	rxStateRsp(ap_uint<24> epsn, ap_uint<24> old)
+		:epsn(epsn), oldest_outstanding_psn(old), max_forward(0), retryCounter(0) {}
+	rxStateRsp(ap_uint<24> epsn, ap_uint<24> old, ap_uint<24> maxf)
+		:epsn(epsn), oldest_outstanding_psn(old), max_forward(maxf), retryCounter(0) {}
+	rxStateRsp(ap_uint<24> epsn, ap_uint<24> old, ap_uint<24> maxf, ap_uint<3> rc)
+		:epsn(epsn), oldest_outstanding_psn(old), max_forward(maxf), retryCounter(rc) {}
+};
+
 struct rxStateReq
 {
 	ap_uint<16> qpn;
@@ -83,12 +113,17 @@ struct rxStateReq
 	ap_uint<MRC_MPR> bitmap;
 	ap_uint<MRC_MPR> lastmap;
 	bool prevAr;
+	ap_uint<24> maxRcvPsn;
+	ap_uint<24> lowestUnsackedPsn;
+	ap_uint<32> rcvdBytes;
+	ap_uint<24> sackTriggerCnt;
 
 	rxStateReq() :isResponse(false), write(false) {}
 	rxStateReq(ap_uint<24> qpn, bool isRsp)
 		:qpn(qpn), isResponse(isRsp), write(false) {}
-	rxStateReq(ap_uint<16> qpn, ap_uint<24> psn, ap_uint<MRC_MPR> bitmap, ap_uint<MRC_MPR> lastmap, bool prevAr, bool isRsp)
-		:qpn(qpn), epsn(psn), retryCounter(0x7), isResponse(isRsp), write(true), bitmap(bitmap), lastmap(lastmap), prevAr(prevAr) {}
+	rxStateReq(ap_uint<16> qpn, const rxStateRsp& s)
+		:qpn(qpn), epsn(s.epsn), retryCounter(0x7), isResponse(false), write(true), bitmap(s.bitmap), lastmap(s.lastmap), prevAr(s.prevAr),
+		 maxRcvPsn(s.maxRcvPsn), lowestUnsackedPsn(s.lowestUnsackedPsn), rcvdBytes(s.rcvdBytes), sackTriggerCnt(s.sackTriggerCnt) {}
 };
 
 // ------------------------------------------------------------------------------------------------
@@ -125,28 +160,6 @@ struct reqStateRsp
 	reqStateRsp() {}
 	reqStateRsp(ap_uint<24> unack, ap_uint<24> maxSent, ap_uint<3> retries, bool error)
 		: unack_psn(unack), max_psn_sent(maxSent), retries(retries), error(error) {}
-};
-
-struct rxStateRsp
-{
-	//window
-	ap_uint<24> epsn;
-	ap_uint<24> oldest_outstanding_psn;
-	ap_uint<24> max_forward; //used for reponses, page 346
-
-	ap_uint<3>	retryCounter;
-
-	ap_uint<MRC_MPR> bitmap;
-	ap_uint<MRC_MPR> lastmap;
-	bool prevAr;
-
-	rxStateRsp() {}
-	rxStateRsp(ap_uint<24> epsn, ap_uint<24> old)
-		:epsn(epsn), oldest_outstanding_psn(old), max_forward(0), retryCounter(0) {}
-	rxStateRsp(ap_uint<24> epsn, ap_uint<24> old, ap_uint<24> maxf)
-		:epsn(epsn), oldest_outstanding_psn(old), max_forward(maxf), retryCounter(0) {}
-	rxStateRsp(ap_uint<24> epsn, ap_uint<24> old, ap_uint<24> maxf, ap_uint<3> rc)
-		:epsn(epsn), oldest_outstanding_psn(old), max_forward(maxf), retryCounter(rc) {}
 };
 
 struct txStateReq
@@ -219,6 +232,10 @@ void state_table(
 				state_table[rxRequest.qpn].resp_bitmap  = rxRequest.bitmap;
 				state_table[rxRequest.qpn].resp_lastmap = rxRequest.lastmap;
 				state_table[rxRequest.qpn].resp_prev_ar = rxRequest.prevAr;
+				state_table[rxRequest.qpn].resp_max_rcv_psn         = rxRequest.maxRcvPsn;
+				state_table[rxRequest.qpn].resp_lowest_unsacked_psn = rxRequest.lowestUnsackedPsn;
+				state_table[rxRequest.qpn].resp_rcvd_bytes          = rxRequest.rcvdBytes;
+				state_table[rxRequest.qpn].resp_sack_trigger_cnt    = rxRequest.sackTriggerCnt;
 			}
 		}
 		else
@@ -235,6 +252,10 @@ void state_table(
 				rsp.bitmap  = entry.resp_bitmap;
 				rsp.lastmap = entry.resp_lastmap;
 				rsp.prevAr = entry.resp_prev_ar;
+				rsp.maxRcvPsn         = entry.resp_max_rcv_psn;
+				rsp.lowestUnsackedPsn = entry.resp_lowest_unsacked_psn;
+				rsp.rcvdBytes         = entry.resp_rcvd_bytes;
+				rsp.sackTriggerCnt    = entry.resp_sack_trigger_cnt;
 				stateTable2rxIbh_rsp.write(rsp);
 			}
 		}
@@ -288,6 +309,11 @@ void state_table(
 				state_table[ifRequest.qpn].resp_bitmap  = 0;
 				state_table[ifRequest.qpn].resp_lastmap = 0;
 				state_table[ifRequest.qpn].resp_prev_ar = false;
+
+				state_table[ifRequest.qpn].resp_max_rcv_psn         = ifRequest.local_psn - 1;
+				state_table[ifRequest.qpn].resp_lowest_unsacked_psn = ifRequest.local_psn - 1;
+				state_table[ifRequest.qpn].resp_rcvd_bytes          = 0;
+				state_table[ifRequest.qpn].resp_sack_trigger_cnt    = 0;
 				//stateTable2rxIbh_inv.write(ifRequest.qpn);
 			} else {
 				state_table[ifRequest.qpn].req_next_psn = ifRequest.remote_psn;

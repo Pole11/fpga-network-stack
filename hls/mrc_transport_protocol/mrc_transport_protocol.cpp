@@ -360,12 +360,14 @@ void mrc_transport_protocol(
 	static stream<mrcCtrlMeta<WIDTH> > rx_ctrl2fsm_MetaFifo("rx_ctrl2fsm_MetaFifo");
 	static stream<mrcCtrlMeta<WIDTH> > rx_ctrl2req_MetaFifo("rx_ctrl2req_MetaFifo");
 	static stream<reqErrEvent> 			rx_req2err_Fifo("rx_req2err_Fifo");
+	static stream<ap_uint<16> > rx_udpSplit2ibh_LenFifo("rx_udpSplit2ibh_LenFifo");
 	#pragma HLS STREAM depth=4 variable=rx_req2err_Fifo
-#if defined( __VITIS_HLS__)
-	#pragma HLS aggregate variable=rx_req2err_Fifo compact=bit
-#else
-	#pragma HLS DATA_PACK variable=rx_req2err_Fifo
-#endif
+	#pragma HLS STREAM depth=8 variable=rx_udpSplit2ibh_LenFifo
+	#if defined( __VITIS_HLS__)
+		#pragma HLS aggregate variable=rx_req2err_Fifo compact=bit
+	#else
+		#pragma HLS DATA_PACK variable=rx_req2err_Fifo
+	#endif
 	#pragma HLS STREAM depth=4 variable=rx_ibh2ctrl_MetaFifo
 	#pragma HLS STREAM depth=4 variable=rx_ibh2split_Fifo
 	#pragma HLS STREAM depth=4 variable=rx_ibh2udpSplit_Fifo
@@ -435,7 +437,7 @@ void mrc_transport_protocol(
 
 	// data / control split
 	rx_split_ctrl<WIDTH, INSTID>(rx_shift2exhFifo, rx_ibh2split_Fifo, rx_split2dataFifo, rx_split2ctrlFifo);
-	rx_split_udp_meta<INSTID>(s_axis_rx_meta, rx_ibh2udpSplit_Fifo, rx_udpSplit2data_MetaFifo, rx_udpSplit2ctrl_MetaFifo);
+	rx_split_udp_meta<INSTID>(s_axis_rx_meta, rx_ibh2udpSplit_Fifo, rx_udpSplit2data_MetaFifo, rx_udpSplit2ibh_LenFifo, rx_udpSplit2ctrl_MetaFifo);
 
 	// control path
 	rx_process_ctrl<WIDTH, INSTID>(rx_split2ctrlFifo, rx_ibh2ctrl_MetaFifo, rx_udpSplit2ctrl_MetaFifo, rx_ctrl2fsm_MetaFifo);
@@ -484,6 +486,7 @@ void mrc_transport_protocol(
 		m_axis_dbg_1,
 #endif 
 		rx_ibh2fsm_MetaFifo,
+		rx_udpSplit2ibh_LenFifo,
 		rx_exhMetaFifo,
 		stateTable2rxIbh_rsp,
 		rxIbh2stateTable_upd_req,
