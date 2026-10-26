@@ -53,6 +53,7 @@ using namespace hls;
 #endif
 
 #define MRC_MPR 128
+#define MRC_MPR_BITS 7
 #define MRC_SACK_GEN_THRESHOLD 16384
 
 const uint32_t BTH_SIZE = 96;
