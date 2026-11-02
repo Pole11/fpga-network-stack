@@ -74,7 +74,7 @@ const ap_uint<16> RDMA_DEFAULT_PORT = 0x12B7; //4791 --> 0x12B7
 typedef enum {RESET, INIT, READY_RECV, READY_SEND, SQ_ERROR, ERROR} qpState;
 
 typedef enum {AETH, RETH, RAW, IMMED} pkgType;
-typedef enum {SHIFT_RETH, SHIFT_NONE, SHIFT_RETH_IMM} pkgShiftType;
+typedef enum {SHIFT_RETH, SHIFT_NONE, SHIFT_RETH_IMM} pkgShiftType; // DO NOT REORDER
 typedef enum {PKG_SEND, PKG_WRITE} pkgOper;
 
 typedef enum {

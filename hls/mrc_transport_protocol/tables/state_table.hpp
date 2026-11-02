@@ -218,7 +218,7 @@ void state_table(
 		// Since step B rx_ibh_fsm only handles requests: the isResponse branches below are
 		// unreachable (cleanup)
 		// todo cleanup !!! not all, but just the isResponse branches
-		if (rxRequest.write)
+		if (rxRequest.write && rxRequest.qpn < MAX_QPS)
 		{
 			if (rxRequest.isResponse)
 			{
@@ -238,9 +238,9 @@ void state_table(
 				state_table[rxRequest.qpn].resp_sack_trigger_cnt    = rxRequest.sackTriggerCnt;
 			}
 		}
-		else
+		else if (!rxRequest.write)   
 		{
-			stateTableEntry entry = state_table[rxRequest.qpn(15,0)];
+			stateTableEntry entry = state_table[rxRequest.qpn % MAX_QPS];
 			if (rxRequest.isResponse)
 			{
 				stateTable2rxIbh_rsp.write(rxStateRsp(entry.req_old_unack, entry.req_old_valid, entry.req_next_psn-1));
@@ -263,15 +263,15 @@ void state_table(
 	else if (!rxCtrl2stateTable_upd_req.empty())
 	{
 		rxCtrl2stateTable_upd_req.read(ctrlRequest);
-		if (ctrlRequest.write)
+		if (ctrlRequest.write && ctrlRequest.qpn < MAX_QPS)
 		{
 			state_table[ctrlRequest.qpn].req_old_unack = ctrlRequest.unack_psn;
 			state_table[ctrlRequest.qpn].req_retries   = ctrlRequest.retries;
 			state_table[ctrlRequest.qpn].req_error     = ctrlRequest.error;
 		}
-		else
+		else if (!ctrlRequest.write)
 		{
-			stateTableEntry entry = state_table[ctrlRequest.qpn];
+			stateTableEntry entry = state_table[ctrlRequest.qpn % MAX_QPS];
 			stateTable2rxCtrl_rsp.write(reqStateRsp(entry.req_old_unack, entry.req_next_psn - 1,
 			                                        entry.req_retries, entry.req_error));
 		}
@@ -279,19 +279,19 @@ void state_table(
 	else if (!txIbh2stateTable_upd_req.empty())
 	{
 		txIbh2stateTable_upd_req.read(txRequest);
-		if (txRequest.write)
+		if (txRequest.write && txRequest.qpn < MAX_QPS)
 		{
 			state_table[txRequest.qpn].req_next_psn = txRequest.psn;
 		}
-		else
+		else if (!txRequest.write)
 		{
-			stateTable2txIbh_rsp.write(state_table[txRequest.qpn]);
+			stateTable2txIbh_rsp.write(state_table[txRequest.qpn % MAX_QPS]);
 		}
 	}
 	else if (!qpi2stateTable_upd_req.empty())
 	{
 		qpi2stateTable_upd_req.read(ifRequest);
-		if (ifRequest.write)
+		if (ifRequest.write && ifRequest.qpn < MAX_QPS)
 		{
 			std::cout << std::hex << "[STATE TABLE " << INSTID << "]: setup new connection, psn " << ifRequest.remote_psn << std::endl;
 			//state_table[ifRequest.qpn].state = ifRequest.newState;
@@ -327,9 +327,9 @@ void state_table(
 			//state_table[ifRequest.qpn].r_key = ifRequest.r_key;
 			//state_table[ifRequest.qpn].virtual_address = ifRequest.virtual_address;
 		}
-		else
+		else if (!ifRequest.write)
 		{
-			stateTable2qpi_rsp.write(state_table[ifRequest.qpn(15,0)]);
+			stateTable2qpi_rsp.write(state_table[ifRequest.qpn % MAX_QPS]);
 		}
 	}
 

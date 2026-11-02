@@ -373,8 +373,10 @@ void rx_ibh_fsm(
 
 			// UDP + BTH + METH + TSETH? + RETH + ImmDt? + ICRC
 			ap_uint<16> hdrLen = 8 + 12 + 4 + (meta.ts ? 4 : 0) + 16 + (checkIfImmDt(meta.op_code) ? 4 : 0) + 4;
+			// isn’t meant to count real wire bytes
+			// it’s an accounting value shared with the requestor’s congestion control, and what matters is that both ends compute exactly the same number per packet
 			qpState.rcvdBytes      += udpLen + 40; // nominal_pktsize (8.3.1)
-			qpState.sackTriggerCnt += (udpLen > hdrLen + 1024) ? (ap_uint<16>)(udpLen - hdrLen) : (ap_uint<16>)1024; // max(payload, MIN_ACK_PACKET_SIZE)
+			qpState.sackTriggerCnt += (udpLen > hdrLen + 1024) ? (ap_uint<16>)(udpLen - hdrLen) : (ap_uint<16>)1024; // max(payload, MIN_ACK_PACKET_SIZE), at least 1024
 
 			if (accepted) // packet is inside the window
 			{
@@ -410,9 +412,9 @@ void rx_ibh_fsm(
 				                 || qpState.sackTriggerCnt > MRC_SACK_GEN_THRESHOLD; // also add || n != 0 so that a SACK is generated on every cum_ack increment?
 				qpState.prevAr = qpState.prevAr && meta.cack != qpState.maxRcvPsn;
 
-				if ((ap_int<24>)(qpState.lowestUnsackedPsn - meta.cack) < 0)
+				if ((ap_int<24>)(qpState.lowestUnsackedPsn - meta.cack) < 0) // cack has overtaken the previous lowestUnsackedPsn so update it
 					qpState.lowestUnsackedPsn = meta.cack;
-				else if (n == 0 && !meta.ackReq && (ap_int<24>)(meta.psn - qpState.lowestUnsackedPsn) < 0)
+				else if (n == 0 && !meta.ackReq && (ap_int<24>)(meta.psn - qpState.lowestUnsackedPsn) < 0) // a lower PSN packet arrived
 					qpState.lowestUnsackedPsn = meta.psn;
 			}
 			else if (!outOfWindow) // duplicate (bit is already set or are behind the window by less than 0x800000)
@@ -451,7 +453,7 @@ void rx_ibh_fsm(
 				}
 				if (accepted)
 					metaOut.write(meta);
-				stateTable_upd_req.write(rxStateReq(meta.dest_qp, qpState));
+				stateTable_upd_req.write(rxStateReq(meta.dest_qp, qpState)); // probably not the cleanest way to wrap data
 			}
 
 			//cacheState = qpState;
@@ -536,9 +538,16 @@ void rx_exh_fsm(
 			// UDP + BTH + METH/TSETH/ImmDt + RETH + ICRC
 			payLoadLength = udpLength - (8 + 12 + exHeader.mrc.length() + 16 + 4);
 
-			// The RETH va is this packet's own address, so no msn-table vaddr tracking is needed
+			// last packet is wrong, completions are different in MRC, but keep for now, until write IMM are done 6.3.2
 			memoryWriteCmd.write(memCmd(meta.op_code, meta.dest_qp, lastPkt ? PKG_F : PKG_NF,
 			                            rdmaHeader.getVirtualAddress(), payLoadLength, PKG_NR, PKG_HOST, 0));
+			
+			// probably the lastmap should be used to send the signal when a message completes
+			// note that this line is coalescing message completions, which is wrong for MRC!
+			// completions is done by write immediates, so you need to keep track of them
+			//memoryWriteCmd.write(memCmd(meta.op_code, meta.dest_qp, (meta.immInc != 0) ? PKG_F : PKG_NF,
+            //                			rdmaHeader.getVirtualAddress(), payLoadLength, PKG_NR, PKG_HOST, 0));
+			
 			if (immPkt)
 			{
 				// Parsed and available: exHeader.mrc.immDt, exHeader.mrc.rqmsn
@@ -695,7 +704,7 @@ void merge_rx_pkgs(
 #pragma HLS inline off
 #pragma HLS pipeline II=1
 
-	enum mrpStateType{IDLE, FWD_RETH, FWD_RETH_IMM, FWD_NONE};
+	enum mrpStateType{FWD_RETH, FWD_NONE, FWD_RETH_IMM, IDLE}; // DO NOT REORDER
 	static mrpStateType state = IDLE;
 
 	pkgShift shift;
@@ -704,12 +713,18 @@ void merge_rx_pkgs(
 	switch (state)
 	{
 	case IDLE:
+		// if (!rx_pkgShiftTypeFifo.empty())
+		// {
+		// 	rx_pkgShiftTypeFifo.read(shift);
+		// 	if (shift.type == SHIFT_RETH)     		state = FWD_RETH;
+		// 	else if (shift.type == SHIFT_RETH_IMM) 	state = FWD_RETH_IMM;
+		// 	else                                   	state = FWD_NONE;
+		// }
+		// break;
 		if (!rx_pkgShiftTypeFifo.empty())
 		{
 			rx_pkgShiftTypeFifo.read(shift);
-			if (shift.type == SHIFT_RETH)     		state = FWD_RETH;
-			else if (shift.type == SHIFT_RETH_IMM) 	state = FWD_RETH_IMM;
-			else                                   	state = FWD_NONE;
+			state = (mrpStateType) shift.type; // it is alligned with the enum
 		}
 		break;
 	case FWD_RETH:

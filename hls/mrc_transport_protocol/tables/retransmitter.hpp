@@ -308,8 +308,7 @@ void process_retransmissions(
 #pragma HLS PIPELINE II=1
 #pragma HLS INLINE off
 
-	enum retransStateType {MAIN, INSERT_0, INSERT_1, UPDATE_0, UPDATE_1, RETRANS_0, RETRANS_1, RETRANS_2, TIMER_RETRANS_0};
-	static retransStateType rt_state = MAIN;
+	enum retransStateType {MAIN, INSERT_0, INSERT_1, UPDATE_0, UPDATE_1, UPDATE_2, RETRANS_0, RETRANS_1, RETRANS_2, TIMER_RETRANS_0};	static retransStateType rt_state = MAIN;
 	static retransUpdate update;
 	static ap_uint<16> curr;
 	static ap_uint<16> newMetaIdx;
@@ -409,33 +408,36 @@ void process_retransmissions(
 		}
 		break;
 	case UPDATE_1:
-		// Release every entry with psn <= cack_psn, reporting each one (posted order) as a completion
 		if (!metaRspFifo.empty())
 		{
 			metaRspFifo.read(meta);
-
-			if (meta.valid && mrcPsnLE(meta.psn, update.latest_acked_req))
-			{
-				retrans2rx_init.write(retransRdInit(update.qpn, meta.psn, meta.localAddr, meta.lst, meta.host));
-				std::cout << std::hex << "[PROCESS RETRANSMISSION " << INSTID << "]: released psn " << meta.psn
-				          << " (cack " << update.latest_acked_req << "), last " << meta.lst << std::dec << std::endl;
-
-				releaseFifo.write(curr);
-				ptrMeta.head  = meta.next;
-				ptrMeta.valid = !meta.isTail;
-				curr          = meta.next;
-
-				if (!meta.isTail)
-				{
-					// next entry may be covered too: keep the lock and stay in UPDATE_1
-					metaReqFifo.write(retransMetaReq(meta.next));
-					break;
-				}
-			}
-			// first entry beyond cack_psn, end of list, or invalid entry: write back and unlock
-			pointerUpdFifo.write(pointerUpdate(update.qpn, ptrMeta));
-			rt_state = MAIN;
+			rt_state = UPDATE_2;
 		}
+		break;
+	case UPDATE_2:
+		// Release every entry with psn <= cack_psn, reporting each one (posted order) as a completion
+		if (meta.valid && mrcPsnLE(meta.psn, update.latest_acked_req))
+		{
+			retrans2rx_init.write(retransRdInit(update.qpn, meta.psn, meta.localAddr, meta.lst, meta.host));
+			std::cout << std::hex << "[PROCESS RETRANSMISSION " << INSTID << "]: released psn " << meta.psn
+			          << " (cack " << update.latest_acked_req << "), last " << meta.lst << std::dec << std::endl;
+
+			releaseFifo.write(curr);
+			ptrMeta.head  = meta.next;
+			ptrMeta.valid = !meta.isTail;
+			curr          = meta.next;
+
+			if (!meta.isTail)
+			{
+				// next entry may be covered too: keep the lock and request it
+				metaReqFifo.write(retransMetaReq(meta.next));
+				rt_state = UPDATE_1;
+				break;
+			}
+		}
+		// first entry beyond cack_psn, end of list, or invalid entry: write back and unlock
+		pointerUpdFifo.write(pointerUpdate(update.qpn, ptrMeta));
+		rt_state = MAIN;
 		break;
 	case RETRANS_0:
 		if (!pointerRspFifo.empty())
