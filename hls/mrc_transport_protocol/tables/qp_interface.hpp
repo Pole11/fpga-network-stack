@@ -1,6 +1,8 @@
 #pragma once
 
 #include "../mrc_headers.hpp"
+#include "state_table.hpp"
+#include "msn_table.hpp"
 
 template <int INSTID = 0>
 void qp_interface(	

@@ -31,7 +31,7 @@ EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <iostream>
 #include "../../axi_utils.hpp"
 #include "../mrc_transport_protocol.hpp"
-#include "retransmitter.hpp"
+#include "retransmitter/retransmitter_types.hpp"
 #include <rocev2_config.hpp> //defines MAX_QPS
 
 

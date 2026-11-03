@@ -152,7 +152,7 @@ void ipv6(	hls::stream<net_axis<WIDTH> >&	s_axis_rx_data,
 	#pragma HLS STREAM depth=8 variable=rx_ipv62shiftFifo
 
 	process_ipv6(s_axis_rx_data, m_axis_rx_meta, rx_ipv62shiftFifo);
-	rshiftWordByOctet<net_axis<WIDTH>, WIDTH, 1, ((IPV6_HEADER_SIZE%WIDTH)/8)>(rx_ipv62shiftFifo, m_axis_rx_data);
+	rshiftWordByOffset<net_axis<WIDTH>, WIDTH, 1, ((IPV6_HEADER_SIZE%WIDTH)/8)>(rx_ipv62shiftFifo, m_axis_rx_data);
 	
 	/*
 	 * TX PATH

@@ -1862,7 +1862,7 @@ void tx_engine(	stream<extendedEvent>&			eventEng2txEng_event,
 	remove_pseudo_header<WIDTH>(txEng_tcpPkgBuffer2, txEng_tcpPkgBuffer3);
 
 	//TODO merge these two shifts
-	rshiftWordByOctet<net_axis<WIDTH>, WIDTH, 53, ((96%WIDTH)/8)>(txEng_tcpPkgBuffer3, txEng_tcpPkgBuffer4);
+	rshiftWordByOffset<net_axis<WIDTH>, WIDTH, 53, ((96%WIDTH)/8)>(txEng_tcpPkgBuffer3, txEng_tcpPkgBuffer4);
 
 	insert_checksum<WIDTH>(txEng_tcpChecksumFifo, txEng_tcpPkgBuffer4, txEng_tcpPkgBuffer5);
 	

@@ -2164,7 +2164,7 @@ void rx_engine(	stream<net_axis<WIDTH> >&					ipRxData,
 								rxEng2portTable_req,
 								rxEng_optionalFieldsMetaFifo);
 
-	rshiftWordByOctet<net_axis<WIDTH>, WIDTH, 3, ((TCP_FULL_PSEUDO_HEADER_SIZE%WIDTH)/8)>(rxEng_dataBuffer3a, rxEng_dataBuffer3b);
+	rshiftWordByOffset<net_axis<WIDTH>, WIDTH, 3, ((TCP_FULL_PSEUDO_HEADER_SIZE%WIDTH)/8)>(rxEng_dataBuffer3a, rxEng_dataBuffer3b);
 	
 	drop_optional_header_fields<WIDTH>(rxEng_optionalFieldsMetaFifo,
 													rxEng_dataBuffer3b,

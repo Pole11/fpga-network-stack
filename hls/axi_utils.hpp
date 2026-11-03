@@ -441,7 +441,7 @@ void convertStreamWidth(hls::stream<net_axis<W> >& input, hls::stream<net_axis<W
 
 // The 2nd template parameter is a hack to use this function multiple times
 template <typename T, int W, int whatever, int OFFSET, int INSTID = 0>
-void rshiftWordByOctet(	hls::stream<T>& input,
+void rshiftWordByOffset(	hls::stream<T>& input,
 						hls::stream<T>& output)
 {
 #pragma HLS inline off
@@ -1334,7 +1334,7 @@ void ip_handler_rshiftWordByOctet(	uint16_t offset,
 
 // The 2nd template parameter is a hack to use this function multiple times
 template <typename T, int W, int whatever>
-void udp_rshiftWordByOctet(	uint16_t offset,
+void udp_rshiftWordByOffset(	uint16_t offset,
 						hls::stream<T>& input,
 						hls::stream<T>& output)
 {

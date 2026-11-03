@@ -36,13 +36,38 @@ EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "tables/msn_table.hpp"
 #include "tables/transport_timer.hpp"
 #include "tables/qp_interface.hpp"
-#include "tables/retransmitter.hpp"
-#include "rx/rx_common.hpp"
-#include "rx/rx_ctrl.hpp"
-#include "rx/rx_ctrl_req.hpp"
-#include "rx/rx_data_res.hpp"
-#include "tx/tx_common.hpp"
-#include "tx/tx_data_req.hpp"
+#include "tables/retransmitter/retransmitter.hpp"
+// RX common
+#include "rx/rx_process_ibh.hpp"
+#include "rx/rx_split_ctrl.hpp"
+#include "rx/rx_split_udp_meta.hpp"
+// RX control
+#include "rx/rx_process_ctrl.hpp"
+#include "rx/rx_ctrl_fsm.hpp"
+// RX requestor control: receive ACK/NACK/SACK/EP_RSP
+#include "rx/rx_ack_cpl.hpp"
+#include "rx/rx_req_fsm.hpp"
+// RX responder data: receive WRITEs
+#include "rx/rx_strip_mrc_eth.hpp"
+#include "rx/rx_process_exh.hpp"
+#include "rx/rx_ibh_fsm.hpp"
+#include "rx/rx_exh_fsm.hpp"
+#include "rx/drop_ooo_ibh.hpp"
+#include "rx/rx_exh_payload.hpp"
+#include "rx/merge_rx_pkgs.hpp"
+#include "rx/ipUdpMetaHandler.hpp"
+// TX common
+#include "tx/meta_merger.hpp"
+#include "tx/generate_ibh.hpp"
+#include "tx/generate_exh.hpp"
+#include "tx/append_payload.hpp"
+#include "tx/prepend_ibh_header.hpp"
+#include "tx/tx_ipUdpMetaMerger.hpp"
+// TX requestor data: send WRITEs
+#include "tx/local_req_handler.hpp"
+#include "tx/mem_cmd_merger.hpp"
+#include "tx/tx_pkg_arbiter.hpp"
+#include "tx/merge_retrans_request.hpp"
 
 
 template <int WIDTH, int INSTID = 0>
@@ -433,7 +458,7 @@ void mrc_transport_protocol(
 		regIbvCountRx
 	);
 
-	rshiftWordByOctet<net_axis<WIDTH>, WIDTH, 11, ((BTH_SIZE%WIDTH)/8), INSTID>(rx_ibh2shiftFifo, rx_shift2exhFifo);
+	rshiftWordByOffset<net_axis<WIDTH>, WIDTH, 11, ((BTH_SIZE%WIDTH)/8), INSTID>(rx_ibh2shiftFifo, rx_shift2exhFifo);
 
 	// data / control split
 	rx_split_ctrl<WIDTH, INSTID>(rx_shift2exhFifo, rx_ibh2split_Fifo, rx_split2dataFifo, rx_split2ctrlFifo);
@@ -443,7 +468,7 @@ void mrc_transport_protocol(
 	rx_process_ctrl<WIDTH, INSTID>(rx_split2ctrlFifo, rx_ibh2ctrl_MetaFifo, rx_udpSplit2ctrl_MetaFifo, rx_ctrl2fsm_MetaFifo);
 	rx_ctrl_fsm<WIDTH, INSTID>(rx_ctrl2fsm_MetaFifo, rx_ctrl2req_MetaFifo);
 
-	// Requestor side of the control path (mrc_rx_req.hpp)
+	// Requestor side of the control path (rx/rx_req_fsm.hpp)
 	rx_req_fsm<WIDTH, INSTID>(
 		rx_ctrl2req_MetaFifo,
 		stateTable2rxCtrl_rsp,
@@ -539,10 +564,10 @@ void mrc_transport_protocol(
 	// RETH: 16 bytes
 	//TODO not required for AXI_WIDTH == 64, also this seems to have a bug, this goes together with the hack in process_exh where we don't write the first word out
 //#if AXI_WIDTH != 64
-	rshiftWordByOctet<net_axis<WIDTH>, WIDTH, 12, ((RETH_SIZE%WIDTH)/8), INSTID>(rx_exh2rethShiftFifo, rx_rethSift2mergerFifo);
+	rshiftWordByOffset<net_axis<WIDTH>, WIDTH, 12, ((RETH_SIZE%WIDTH)/8), INSTID>(rx_exh2rethShiftFifo, rx_rethSift2mergerFifo);
 //#endif
 	// RETH + ImmDt: 20 bytes (4 on 64/128-bit buses, where rx_process_exh already drops the full RETH words)
-	rshiftWordByOctet<net_axis<WIDTH>, WIDTH, 14, (((RETH_SIZE + IMMDT_SIZE)%WIDTH)/8), INSTID>(rx_exh2rethImmShiftFifo, rx_rethImmShift2mergerFifo);
+	rshiftWordByOffset<net_axis<WIDTH>, WIDTH, 14, (((RETH_SIZE + IMMDT_SIZE)%WIDTH)/8), INSTID>(rx_exh2rethImmShiftFifo, rx_rethImmShift2mergerFifo);
 
 	merge_rx_pkgs<WIDTH, INSTID>(rx_pkgShiftTypeFifo, rx_rethSift2mergerFifo,
 	                             rx_rethImmShift2mergerFifo, rx_exhNoShiftFifo, m_axis_mem_write_data);

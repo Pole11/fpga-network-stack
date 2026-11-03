@@ -226,7 +226,7 @@ void udp(		hls::stream<ipMeta>&		s_axis_rx_meta,
 #endif
 
 	process_udp<WIDTH>(s_axis_rx_data, rx_udpMetaFifo, rx_udp2shiftFifo, reg_listen_port);
-	udp_rshiftWordByOctet<net_axis<WIDTH>, WIDTH, 2>(((UDP_HEADER_SIZE%WIDTH)/8), rx_udp2shiftFifo, m_axis_rx_data);
+	udp_rshiftWordByOffset<net_axis<WIDTH>, WIDTH, 2>(((UDP_HEADER_SIZE%WIDTH)/8), rx_udp2shiftFifo, m_axis_rx_data);
 
 	merge_rx_meta(s_axis_rx_meta, rx_udpMetaFifo, m_axis_rx_meta);
 
