@@ -328,9 +328,10 @@ struct pkgShift
 {
 	pkgShiftType type;
 	ap_uint<24> qpn;
+	ap_uint<2> pad; // pad bytes at the end of the payload, removed before the memory
 	pkgShift() {}
-	pkgShift(pkgShiftType type, ap_uint<24> qpn) 
-		:type(type), qpn(qpn) {}
+	pkgShift(pkgShiftType type, ap_uint<24> qpn, ap_uint<2> pad = 0)
+		:type(type), qpn(qpn), pad(pad) {}
 };
 
 struct pkgInfo
@@ -471,6 +472,7 @@ public:
 	bool getRtx()          { return header[69]; }
 	void setTs(bool bit)   { header[68] = bit; }
 	bool getTs()           { return header[68]; }
+	ap_uint<2> getPadCnt() { return header(13, 12); } // BTH byte 1 bits [5:4]: pad bytes after the payload
 };
 
 struct ibhMeta
@@ -488,6 +490,7 @@ struct ibhMeta
 	ap_uint<24> cack;	// the new cack_psn, which is the one the ACK must carry
 	// change the size of those two below according to the defines
 	ap_uint<16> sackOffset; // sack_base - cack (7.5.2.2), valid when ackReq
+	ap_uint<2>  padCnt = 0; // BTH.PadCnt, 0 for every constructor that does not set it
 	ap_uint<8>  oooCount;   // rx_ooo_count, max 127 with MPR = 128
 
 	ibhMeta()

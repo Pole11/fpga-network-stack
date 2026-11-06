@@ -49,6 +49,7 @@ void rx_process_ibh(
 				else
 				{
 					ibhMeta m(opCode, bth.getPartitionKey(), bth.getDstQP(), bth.getPsn(), true, bth.getAckReq(), bth.getRtx(), bth.getTs());
+					m.padCnt = bth.getPadCnt();
 					metaToIbhFsmOut.write(m);
 					metaToStripCtrlOut.write(mrcEthMeta(opCode, bth.getTs()));
 				}

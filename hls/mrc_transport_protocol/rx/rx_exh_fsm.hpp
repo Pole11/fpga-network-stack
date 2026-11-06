@@ -73,7 +73,7 @@ void rx_exh_fsm(
 			bool immPkt  = checkIfImmDt(meta.op_code);
 
 			// UDP + BTH + METH/TSETH/ImmDt + RETH + ICRC
-			payLoadLength = udpLength - (8 + 12 + exHeader.mrc.length() + 16 + 4);
+			payLoadLength = udpLength - (8 + 12 + exHeader.mrc.length() + 16 + 4) - meta.padCnt;
 
 			// last packet is wrong, completions are different in MRC, but keep for now, until write IMM are done 6.3.2
 			memoryWriteCmd.write(memCmd(meta.op_code, meta.dest_qp, lastPkt ? PKG_F : PKG_NF,
@@ -98,7 +98,7 @@ void rx_exh_fsm(
 				rx_exhEventMetaFifo.write(ackEvent(meta.dest_qp, meta.cack, false)); // todo: don't generate an ACK, but a SACK request one all previous packets arrived
 			
 			rx_pkgSplitTypeFifo.write(pkgSplit(meta.op_code));
-			rx_pkgShiftTypeFifo.write(pkgShift(immPkt ? SHIFT_RETH_IMM : SHIFT_RETH, meta.dest_qp));
+			rx_pkgShiftTypeFifo.write(pkgShift(immPkt ? SHIFT_RETH_IMM : SHIFT_RETH, meta.dest_qp, meta.padCnt));
 			pe_fsmState = META;
 			break;
 		}

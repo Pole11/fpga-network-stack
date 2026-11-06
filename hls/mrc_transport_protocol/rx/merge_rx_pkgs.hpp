@@ -16,6 +16,7 @@ void merge_rx_pkgs(
 	// FWD_RETH = 0,   FWD_NONE = 1,   FWD_RETH_IMM = 2,   IDLE = 3
 	enum mrpStateType{FWD_RETH, FWD_NONE, FWD_RETH_IMM, IDLE}; // DO NOT REORDER
 	static mrpStateType state = IDLE;
+	static ap_uint<2> pad;
 
 	pkgShift shift;
 	net_axis<WIDTH> currWord;
@@ -35,12 +36,14 @@ void merge_rx_pkgs(
 		{
 			rx_pkgShiftTypeFifo.read(shift);
 			state = (mrpStateType) shift.type; // it is alligned with the enum
+			pad = shift.pad;
 		}
 		break;
 	case FWD_RETH:
 		if (!rx_rethSift2mergerFifo.empty())
 		{
 			rx_rethSift2mergerFifo.read(currWord);
+			if (currWord.last) currWord.keep >>= pad; // drop the pad bytes, keep is contiguous from bit 0
 			m_axis_mem_write_data.write(currWord);
 			if (currWord.last) state = IDLE;
 		}
@@ -49,6 +52,7 @@ void merge_rx_pkgs(
 		if (!rx_rethImmSift2mergerFifo.empty())
 		{
 			rx_rethImmSift2mergerFifo.read(currWord);
+			if (currWord.last) currWord.keep >>= pad; // drop the pad bytes, keep is contiguous from bit 0
 			m_axis_mem_write_data.write(currWord);
 			if (currWord.last) state = IDLE;
 		}
@@ -57,6 +61,7 @@ void merge_rx_pkgs(
 		if (!rx_NoSift2mergerFifo.empty())
 		{
 			rx_NoSift2mergerFifo.read(currWord);
+			if (currWord.last) currWord.keep >>= pad; // drop the pad bytes, keep is contiguous from bit 0
 			m_axis_mem_write_data.write(currWord);
 			if (currWord.last) state = IDLE;
 		}
