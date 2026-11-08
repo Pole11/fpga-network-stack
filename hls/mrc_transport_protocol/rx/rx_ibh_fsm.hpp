@@ -18,7 +18,7 @@ void rx_ibh_fsm(
 	stream<ackEvent>& ibhEventFifo,				// contains qpn, psn, validPsn, isNak
 	stream<bool>& ibhDropFifo,
 	stream<fwdPolicy>& ibhDropMetaFifo,			// contains isDrop, ackOnly
-	//stream<ackMeta>& m_axis_rx_ack_meta,
+	//stream<cplMeta>& m_axis_rx_ack_meta,
 	//stream<ap_uint<16> >& stateTableInv,		// qpn of every QP set up again: its cached state is stale
 	ap_uint<32>& regInvalidPsnDropCount
 ) {
@@ -100,22 +100,26 @@ void rx_ibh_fsm(
 				qpState.bitmap[d(MRC_MPR_BITS - 1, 0)]  = 1;
 				qpState.lastmap[d(MRC_MPR_BITS - 1, 0)] = (meta.op_code == MRC_RDMA_WRITE_LAST     || meta.op_code == MRC_RDMA_WRITE_ONLY ||
 											meta.op_code == MRC_RDMA_WRITE_LAST_IMM || meta.op_code == MRC_RDMA_WRITE_ONLY_IMM);
+				qpState.immmap[d(MRC_MPR_BITS - 1, 0)]  = checkIfImmDt(meta.op_code);
 
 				ap_uint<MRC_MPR> mask = qpState.bitmap & ~(qpState.bitmap + 1); // bits below the lowest hole
 				ap_uint<MRC_MPR_BITS + 1> n = 0;
 				meta.msnInc = 0;
+				meta.immInc = 0;
 				meta.oooCount = 0;
 				for (int i = 0; i < MRC_MPR; i++)
 				{
 				#pragma HLS unroll
 					n           	+= mask[i];
 					meta.msnInc 	+= (mask[i] & qpState.lastmap[i]);
+					meta.immInc 	+= (mask[i] & qpState.immmap[i]);
 					meta.oooCount 	+= (qpState.bitmap[i] & !mask[i]);
 				}
 
 				qpState.epsn    += n;
 				qpState.bitmap  >>= n;
 				qpState.lastmap >>= n;
+				qpState.immmap  >>= n;
 				meta.cack = qpState.epsn - 1;
 
 				qpState.prevAr = qpState.prevAr || meta.ackReq;

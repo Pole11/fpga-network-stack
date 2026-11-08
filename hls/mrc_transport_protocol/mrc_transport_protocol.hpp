@@ -55,6 +55,8 @@ using namespace hls;
 #define MRC_MPR 128
 #define MRC_MPR_BITS 7
 #define MRC_SACK_GEN_THRESHOLD 16384
+#define MRC_MAX_WIMM 32					// max_wimm_inflight
+#define MRC_MAX_WIMM_BITS 5
 
 const uint32_t BTH_SIZE = 96;
 const uint32_t RETH_SIZE = 128;
@@ -256,7 +258,7 @@ struct txMeta
 };
 
 /* ACK meta */
-struct ackMeta 
+struct cplMeta 
 {
     mrcOpCode   op_code; // 32
 	ap_uint<16> qpn;
@@ -264,10 +266,11 @@ struct ackMeta
     ap_uint<4> dst;
     ap_uint<2> strm;
     ap_uint<1> lst;
+    ap_uint<32> imm; // ImmDt of a WriteIMM completion (op_code MRC_RDMA_WRITE_ONLY_IMM), 0 otherwise
 
-	ackMeta() {}
-	ackMeta(mrcOpCode op_code, ap_uint<16> qpn, ap_uint<1> host, ap_uint<4> dst, ap_uint<2> strm, ap_uint<1> lst)
-		: op_code(op_code), qpn(qpn), host(host), dst(dst), strm(strm),  lst(lst) {}
+	cplMeta() {}
+	cplMeta(mrcOpCode op_code, ap_uint<16> qpn, ap_uint<1> host, ap_uint<4> dst, ap_uint<2> strm, ap_uint<1> lst, ap_uint<32> imm = 0)
+		: op_code(op_code), qpn(qpn), host(host), dst(dst), strm(strm),  lst(lst), imm(imm) {}
 };
 
 /* Event */
@@ -492,6 +495,7 @@ struct ibhMeta
 	ap_uint<16> sackOffset; // sack_base - cack (7.5.2.2), valid when ackReq
 	ap_uint<2>  padCnt = 0; // BTH.PadCnt, 0 for every constructor that does not set it
 	ap_uint<8>  oooCount;   // rx_ooo_count, max 127 with MPR = 128
+	ap_uint<8>  immInc;	// how many of the msnInc messages are WriteIMM
 
 	ibhMeta()
 		:op_code(MRC_ACK), ackReq(false), rtx(false), ts(false) {}
@@ -682,7 +686,7 @@ void mrc_transport_protocol(
 	hls::stream<txMeta>& s_axis_sq_meta,
 
 	// ACKs
-	hls::stream<ackMeta>& m_axis_rx_ack_meta,
+	hls::stream<cplMeta>& m_axis_rx_ack_meta,
 
 	// RDMA
 	hls::stream<memCmd>& m_axis_mem_write_cmd,

@@ -21,15 +21,16 @@ struct reqErrEvent
 };
 
 // completions for the host
-// every retransmitter entry released by a transport ACK becomes one ackMeta, in posted order, carrying that packet's lst: the same stream the host received before, now driven by cumulative ACKs 
+// every retransmitter entry released by a transport ACK becomes one cplMeta, in posted order, carrying that packet's lst: the same stream the host received before, now driven by cumulative ACKs 
 // kept in its own process so a slow host interface never stalls rx_req_fsm
 template <int INSTID = 0>
 void rx_ack_cpl(
 #ifdef RETRANS_EN
 	stream<retransRdInit>& retrans2rx_init,
 #endif
+	stream<cplMeta>&       immTable2ackCpl,
 	stream<reqErrEvent>&   errIn,
-	stream<ackMeta>&       m_axis_rx_ack_meta
+	stream<cplMeta>&       m_axis_rx_ack_meta
 ) {
 #pragma HLS inline off
 #pragma HLS pipeline II=1
@@ -44,7 +45,7 @@ void rx_ack_cpl(
 
 		ap_uint<4> dst  = init.host ? (ap_uint<4>) init.laddr(51, 48) : (ap_uint<4>) 0;
 		ap_uint<2> strm = init.host ? (ap_uint<2>) init.laddr(53, 52) : (ap_uint<2>) 0;
-		m_axis_rx_ack_meta.write(ackMeta(MRC_ACK, init.qpn, init.host, dst, strm, init.lst));
+		m_axis_rx_ack_meta.write(cplMeta(MRC_ACK, init.qpn, init.host, dst, strm, init.lst));
 
 		std::cout << std::hex << "[RX ACK CPL " << INSTID << "]: completion qp " << init.qpn
 		          << " psn " << init.psn << " lst " << init.lst << std::dec << std::endl;
@@ -52,13 +53,19 @@ void rx_ack_cpl(
 	}
 #endif
 
+	if (!done && !immTable2ackCpl.empty())
+	{
+		m_axis_rx_ack_meta.write(immTable2ackCpl.read());
+		done = true;
+	}
+
 	if (!done && !errIn.empty())
 	{
 		reqErrEvent err;
 		errIn.read(err);
 		std::cout << std::hex << "[RX ACK CPL " << INSTID << "]: QP " << err.qpn << " in ERROR, type "
 		          << err.type << " code " << err.code << " psn " << err.psn << std::dec << std::endl;
-		// TODO error completion to the host: needs a status field in ackMeta (top-level interface)
+		// TODO error completion to the host: needs a status field in cplMeta (top-level interface)
 		// TODO flush outstanding WRs of this QP with "flushed in error" status
 	}
 }

@@ -42,6 +42,7 @@ struct stateTableEntry
 	// bit 0 is epsn
 	ap_uint<MRC_MPR> resp_bitmap; // packets arrived
 	ap_uint<MRC_MPR> resp_lastmap; // the packet is the last of its message (LAST or ONLY), used for the MSN inside the ACK (means how many messages are completed)
+	ap_uint<MRC_MPR> resp_immmap; // the packet is the last of a WriteIMM message (LAST_IMM or ONLY_IMM)
 	bool resp_prev_ar; // an AR arrived and the bitmap has not been empty since (there are still holes)
 	
 	ap_uint<24> resp_max_rcv_psn;
@@ -87,6 +88,7 @@ struct rxStateRsp
 
 	ap_uint<MRC_MPR> bitmap;
 	ap_uint<MRC_MPR> lastmap;
+	ap_uint<MRC_MPR> immmap;
 	bool prevAr;
 
 	ap_uint<24> maxRcvPsn;
@@ -112,6 +114,7 @@ struct rxStateReq
 	bool		write;
 	ap_uint<MRC_MPR> bitmap;
 	ap_uint<MRC_MPR> lastmap;
+	ap_uint<MRC_MPR> immmap;
 	bool prevAr;
 	ap_uint<24> maxRcvPsn;
 	ap_uint<24> lowestUnsackedPsn;
@@ -122,7 +125,7 @@ struct rxStateReq
 	rxStateReq(ap_uint<24> qpn, bool isRsp)
 		:qpn(qpn), isResponse(isRsp), write(false) {}
 	rxStateReq(ap_uint<16> qpn, const rxStateRsp& s)
-		:qpn(qpn), epsn(s.epsn), retryCounter(0x7), isResponse(false), write(true), bitmap(s.bitmap), lastmap(s.lastmap), prevAr(s.prevAr),
+		:qpn(qpn), epsn(s.epsn), retryCounter(0x7), isResponse(false), write(true), bitmap(s.bitmap), lastmap(s.lastmap), immmap(s.immmap), prevAr(s.prevAr),
 		 maxRcvPsn(s.maxRcvPsn), lowestUnsackedPsn(s.lowestUnsackedPsn), rcvdBytes(s.rcvdBytes), sackTriggerCnt(s.sackTriggerCnt) {}
 };
 
@@ -231,6 +234,7 @@ void state_table(
 				//state_table[rxRequest.qpn].sendNAK = rxRequest.epsn;
 				state_table[rxRequest.qpn].resp_bitmap  = rxRequest.bitmap;
 				state_table[rxRequest.qpn].resp_lastmap = rxRequest.lastmap;
+				state_table[rxRequest.qpn].resp_immmap  = rxRequest.immmap;
 				state_table[rxRequest.qpn].resp_prev_ar = rxRequest.prevAr;
 				state_table[rxRequest.qpn].resp_max_rcv_psn         = rxRequest.maxRcvPsn;
 				state_table[rxRequest.qpn].resp_lowest_unsacked_psn = rxRequest.lowestUnsackedPsn;
@@ -251,6 +255,7 @@ void state_table(
 				rxStateRsp rsp(entry.resp_epsn, entry.resp_old_outstanding, entry.resp_epsn, entry.retryCounter);
 				rsp.bitmap  = entry.resp_bitmap;
 				rsp.lastmap = entry.resp_lastmap;
+				rsp.immmap  = entry.resp_immmap;
 				rsp.prevAr = entry.resp_prev_ar;
 				rsp.maxRcvPsn         = entry.resp_max_rcv_psn;
 				rsp.lowestUnsackedPsn = entry.resp_lowest_unsacked_psn;
@@ -308,6 +313,7 @@ void state_table(
 				
 				state_table[ifRequest.qpn].resp_bitmap  = 0;
 				state_table[ifRequest.qpn].resp_lastmap = 0;
+				state_table[ifRequest.qpn].resp_immmap  = 0;
 				state_table[ifRequest.qpn].resp_prev_ar = false;
 
 				state_table[ifRequest.qpn].resp_max_rcv_psn         = ifRequest.local_psn - 1;

@@ -2,6 +2,7 @@
 
 #include "../mrc_headers.hpp"
 #include "../tables/msn_table.hpp"
+#include "../tables/imm_table.hpp"
 
 template <int WIDTH, int INSTID = 0>
 void rx_exh_fsm(
@@ -15,6 +16,7 @@ void rx_exh_fsm(
 	stream<ExHeader<WIDTH> >& headerInput,
 	stream<memCmd>& memoryWriteCmd,
 	stream<rxMsnReq>& rxExh2msnTable_upd_req,
+	stream<rxImmReq>& rxExh2immTable_req,
 	//stream<mqPopReq>& rx_readReqAddr_pop_req,
 	stream<ackEvent>& rx_exhEventMetaFifo,
 	stream<pkgSplit>& rx_pkgSplitTypeFifo,
@@ -85,15 +87,10 @@ void rx_exh_fsm(
 			//memoryWriteCmd.write(memCmd(meta.op_code, meta.dest_qp, (meta.immInc != 0) ? PKG_F : PKG_NF,
             //                			rdmaHeader.getVirtualAddress(), payLoadLength, PKG_NR, PKG_HOST, 0));
 			
-			if (immPkt)
-			{
-				// Parsed and available: exHeader.mrc.immDt, exHeader.mrc.rqmsn
-				// TODO WriteIMM (6.3.3): stash immDt (keyed by rqmsn) until the message completes,
-				//      then generate the RQ completion carrying it.
-				// TODO more than max_wimm_inflight outstanding -> NAK-Invalid Request (Table 6-15)
-			}
+			if (immPkt || meta.immInc != 0)
+				rxExh2immTable_req.write(rxImmReq(meta.dest_qp, immPkt, exHeader.mrc.rqmsn, exHeader.mrc.immDt, dmaMeta.rqmsn, meta.immInc));
 			if (meta.msnInc != 0)
-				rxExh2msnTable_upd_req.write(rxMsnReq(meta.dest_qp, dmaMeta.msn + meta.msnInc));
+				rxExh2msnTable_upd_req.write(rxMsnReq(meta.dest_qp, dmaMeta.msn + meta.msnInc, dmaMeta.rqmsn + meta.immInc));
 			if (meta.ackReq)
 				rx_exhEventMetaFifo.write(ackEvent(meta.dest_qp, meta.cack, false)); // todo: don't generate an ACK, but a SACK request one all previous packets arrived
 			
