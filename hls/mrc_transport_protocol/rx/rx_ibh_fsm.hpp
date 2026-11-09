@@ -139,7 +139,7 @@ void rx_ibh_fsm(
 				ibhDropFifo.write(true);
 				ibhDropMetaFifo.write(fwdPolicy(true, false));
 			}
-			else if (!outOfWindow)  // duplicate (bit is already set or are behind the window by less than 0x800000)			{
+			else if (!outOfWindow) 
 			{
 				std::cout << std::hex << "[RX IBH FSM " << INSTID << "]: duplicate psn " << meta.psn << std::dec << std::endl;
 				// drop counter increased

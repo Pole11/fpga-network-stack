@@ -139,7 +139,7 @@ struct rxStateReq
 //                  Advanced by the cack_psn of SACKs and transport ACKs.
 //   max_psn_sent = req_next_psn - 1 (req_next_psn is written by TX)
 //   retries      = NACK retries since unack_psn last advanced (Table 7-3)
-//   error        = request: move the QP to ERROR (Class B, Table 6-12). Response: state == ERROR
+//   error        = request only: move the QP to ERROR (Class B, Table 6-12)
 // ------------------------------------------------------------------------------------------------
 struct reqStateReq
 {
@@ -160,11 +160,10 @@ struct reqStateRsp
 	ap_uint<24> unack_psn;
 	ap_uint<24> max_psn_sent;
 	ap_uint<3>  retries;
-	bool        error;
-	bool        valid; // the QP exists and has been set up
+	bool        valid; // the QP is in READY_SEND (not RESET, not ERROR)
 	reqStateRsp() {}
-	reqStateRsp(ap_uint<24> unack, ap_uint<24> maxSent, ap_uint<3> retries, bool error, bool valid)
-		: unack_psn(unack), max_psn_sent(maxSent), retries(retries), error(error), valid(valid) {}
+	reqStateRsp(ap_uint<24> unack, ap_uint<24> maxSent, ap_uint<3> retries, bool valid)
+		: unack_psn(unack), max_psn_sent(maxSent), retries(retries), valid(valid) {}
 };
 
 struct txStateReq
@@ -282,7 +281,7 @@ void state_table(
 		{
 			stateTableEntry entry = state_table[ctrlRequest.qpn % MAX_QPS];
 			stateTable2rxCtrl_rsp.write(reqStateRsp(entry.req_old_unack, entry.req_next_psn - 1,
-			                                        entry.req_retries, entry.state == ERROR, entry.state == READY_SEND && ctrlRequest.qpn < MAX_QPS));
+			                                        entry.req_retries, entry.state == READY_SEND && ctrlRequest.qpn < MAX_QPS));
 		}
 	}
 	else if (!txIbh2stateTable_upd_req.empty())

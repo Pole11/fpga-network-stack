@@ -55,10 +55,10 @@ void rx_req_fsm(
 		{
 			stateTable_rsp.read(qp);
 
-			// a QP that does not exist has no requestor state: silently drop, nothing is written or released
+			// QP not set up, out of range or in ERROR (7.4.2, Table 7-3): silently drop, nothing is written or released
 			if (!qp.valid || m.dest_qp >= MAX_QPS)
 			{
-				std::cout << std::hex << "[RX REQ FSM " << INSTID << "]: invalid qp " << m.dest_qp << ", opcode "
+				std::cout << std::hex << "[RX REQ FSM " << INSTID << "]: qp " << m.dest_qp << " invalid or in error, opcode "
 				          << m.op_code << " dropped" << std::dec << std::endl;
 				state = LOAD;
 				break;
@@ -67,7 +67,7 @@ void rx_req_fsm(
 			ap_uint<16> qpn      = m.dest_qp(15, 0);
 			ap_uint<24> unack    = qp.unack_psn;
 			ap_uint<3>  retries  = qp.retries;
-			bool        error    = qp.error;
+			bool        error    = false;
 			bool        advanced = false;  // unack_psn moved forward
 			bool        dirty    = false;  // requestor state must be written back
 			bool        hasCack  = false;  // this packet carries a cumulative ack (ACK or SACK)
@@ -84,7 +84,6 @@ void rx_req_fsm(
 				          << " psn " << m.psn << " type " << aeth.getAckType() << " value " << aeth.getAckValue()
 				          << " msn " << aeth.getMsn() << ", unack " << unack << " max sent " << qp.max_psn_sent
 				          << std::dec << std::endl;
-				if (error) break;
 
 				if (aeth.getAckType() == AETH_ACK)
 				{
@@ -119,7 +118,6 @@ void rx_req_fsm(
 				          << " sack_base " << h.getSackBasePsn() << " bitmap " << h.getSackBitmap()
 				          << " ooo " << h.getOooCount() << " rcvd_bytes " << h.getRcvdBytes()
 				          << ", unack " << unack << " max sent " << qp.max_psn_sent << std::dec << std::endl;
-				if (error) break;
 
 				// SETH.cack_psn (BTH.psn is reserved in probe responses, 7.4.6)
 				cack    = h.getCackPsn();
@@ -142,7 +140,6 @@ void rx_req_fsm(
 				          << " reason " << reason << " nack_psn " << npsn << " ts " << h.getTxTimestamp()
 				          << ", unack " << unack << " max sent " << qp.max_psn_sent
 				          << " retries " << retries << std::dec << std::endl;
-				if (error) break;
 
 				// TODO CC OnNACK() with getTxTimestamp() (8.5)
 				if (!(mrcPsnLE(unack, npsn) && mrcPsnLE(npsn, qp.max_psn_sent)))
@@ -218,7 +215,7 @@ void rx_req_fsm(
 				bool allAcked = (unack == (ap_uint<24>) (qp.max_psn_sent + 1));
 				rxClearTimer_req.write(rxTimerUpdate(qpn, allAcked));
 			}
-			else if (error && !qp.error)
+			else if (error)
 			{
 				rxClearTimer_req.write(rxTimerUpdate(qpn, true));   // QP just entered ERROR
 			}

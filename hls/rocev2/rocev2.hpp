@@ -39,6 +39,14 @@
 #include "../mrc_transport_protocol/mrc_transport_protocol.hpp"
 #else
 #include "../ib_transport_protocol/ib_transport_protocol.hpp"
+// ib_transport_protocol has no WriteIMM completions: same type as MRC's immMeta, so that rocev2 has the same ports in both
+// builds. The IB build never writes the port
+struct immMeta
+{
+	ap_uint<16> qpn;
+	ap_uint<32> imm;
+	ap_uint<1>  last;
+};
 #endif
 
 #if IP_VERSION == 6
@@ -57,6 +65,9 @@ void rocev2(
 
 	// ACKs
 	stream<ackMeta>& m_axis_rx_ack_meta,
+
+	// WriteIMM completions (MRC only, but should be also implemted by IB)
+	stream<immMeta>& m_axis_rx_imm_meta,
 
 	// RDMA
 	hls::stream<memCmd>& m_axis_mem_write_cmd,

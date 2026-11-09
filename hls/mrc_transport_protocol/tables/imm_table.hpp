@@ -39,7 +39,7 @@ void imm_table(
 	if (req.immInc != 0)
 	{
 		ap_uint<32> imm = imm_table[req.qpn][req.head(MRC_MAX_WIMM_BITS - 1, 0)];
-		m_axis_rx_imm_meta.write(immMeta(req.qpn, imm));
+		m_axis_rx_imm_meta.write(immMeta(req.qpn, imm, req.immInc == 1)); // true only once per hole-filling packet (if is was >= 1, then if a packet completed many WriteIMMs then there would be multiple packets with last = 1, the last one is the one that belongs to the memCmd with lst = 1)
 		std::cout << std::hex << "[IMM TABLE " << INSTID << "]: completion qp " << req.qpn << " rqmsn " << req.head
 		          << " imm " << imm << std::dec << std::endl;
 		req.head++;

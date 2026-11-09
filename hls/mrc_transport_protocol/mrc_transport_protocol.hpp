@@ -277,10 +277,12 @@ struct immMeta
 {
 	ap_uint<16> qpn;
 	ap_uint<32> imm;
+	ap_uint<1>  last; // last ImmDt released by its packet: it belongs to the memCmd with lst = 1 of that packet
+	// last is set when immInc != 0 
 
 	immMeta() {}
-	immMeta(ap_uint<16> qpn, ap_uint<32> imm)
-		: qpn(qpn), imm(imm) {}
+	immMeta(ap_uint<16> qpn, ap_uint<32> imm, ap_uint<1> last)
+		: qpn(qpn), imm(imm), last(last) {}
 };
 
 /* Event */
