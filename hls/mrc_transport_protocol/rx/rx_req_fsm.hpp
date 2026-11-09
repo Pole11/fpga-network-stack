@@ -56,7 +56,7 @@ void rx_req_fsm(
 			stateTable_rsp.read(qp);
 
 			// a QP that does not exist has no requestor state: silently drop, nothing is written or released
-			if (!qp.valid)
+			if (!qp.valid || m.dest_qp >= MAX_QPS)
 			{
 				std::cout << std::hex << "[RX REQ FSM " << INSTID << "]: invalid qp " << m.dest_qp << ", opcode "
 				          << m.op_code << " dropped" << std::dec << std::endl;

@@ -73,7 +73,7 @@ void rx_ibh_fsm(
 			     
 
 			ap_uint<24> d = meta.psn - qpState.epsn; // distance from epsn
-			bool supported   = checkIfWrite(meta.op_code) && qpState.valid; // a Write to a QP that exists
+			bool supported   = checkIfWrite(meta.op_code) && qpState.valid && meta.dest_qp < MAX_QPS; // a Write to a QP that exists (all 24 bits)
 			bool accepted    = supported && d < MRC_MPR && !qpState.bitmap[d];
 			bool outOfWindow = d >= MRC_MPR && d <= 0x800000;
 
