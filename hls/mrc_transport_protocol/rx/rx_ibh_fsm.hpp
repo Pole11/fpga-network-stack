@@ -73,7 +73,8 @@ void rx_ibh_fsm(
 			     
 
 			ap_uint<24> d = meta.psn - qpState.epsn; // distance from epsn
-			bool accepted    = d < MRC_MPR && !qpState.bitmap[d];
+			bool supported   = checkIfWrite(meta.op_code);
+			bool accepted    = supported && d < MRC_MPR && !qpState.bitmap[d];
 			bool outOfWindow = d >= MRC_MPR && d <= 0x800000;
 
 			std::cout << std::hex << "[RX IBH FSM " << INSTID << "]: epsn " << qpState.epsn
@@ -132,7 +133,13 @@ void rx_ibh_fsm(
 				else if (n == 0 && !meta.ackReq && (ap_int<24>)(meta.psn - qpState.lowestUnsackedPsn) < 0) // a lower PSN packet arrived
 					qpState.lowestUnsackedPsn = meta.psn;
 			}
-			else if (!outOfWindow) // duplicate (bit is already set or are behind the window by less than 0x800000)
+			else if (!supported) // not a Write: silently drop it, the QP state is not touched
+			{
+				std::cout << std::hex << "[RX IBH FSM " << INSTID << "]: unsupported opcode " << meta.op_code << ", dropped" << std::dec << std::endl;
+				ibhDropFifo.write(true);
+				ibhDropMetaFifo.write(fwdPolicy(true, false));
+			}
+			else if (!outOfWindow)  // duplicate (bit is already set or are behind the window by less than 0x800000)			{
 			{
 				std::cout << std::hex << "[RX IBH FSM " << INSTID << "]: duplicate psn " << meta.psn << std::dec << std::endl;
 				// drop counter increased
@@ -155,7 +162,7 @@ void rx_ibh_fsm(
 				ibhDropMetaFifo.write(fwdPolicy(true, false));
 			}
 
-			if (!outOfWindow)
+			if (supported && !outOfWindow)
 			{
 				if (meta.ackReq)
 				{
