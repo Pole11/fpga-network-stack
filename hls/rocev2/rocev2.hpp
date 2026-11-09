@@ -33,7 +33,13 @@
 #include "../ipv6/ipv6.hpp"
 #include "../udp/udp.hpp"
 #include "../crc/crc.hpp"
+#include "rocev2_config.hpp"
+
+#ifdef ROCE_TRANSPORT_mrc
 #include "../mrc_transport_protocol/mrc_transport_protocol.hpp"
+#else
+#include "../ib_transport_protocol/ib_transport_protocol.hpp"
+#endif
 
 #if IP_VERSION == 6
 typedef ipv6Meta ipMeta;

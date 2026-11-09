@@ -2,6 +2,7 @@
 #include <stdint.h>
 
 #define RETRANS_EN
+#define ROCE_TRANSPORT_${ROCE_TRANSPORT} // ROCE_TRANSPORT_ib or ROCE_TRANSPORT_mrc
 
 const unsigned DATA_WIDTH = ${DATA_WIDTH} * 8;
 

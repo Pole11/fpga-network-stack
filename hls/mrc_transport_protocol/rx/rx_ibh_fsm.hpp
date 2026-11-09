@@ -18,7 +18,7 @@ void rx_ibh_fsm(
 	stream<ackEvent>& ibhEventFifo,				// contains qpn, psn, validPsn, isNak
 	stream<bool>& ibhDropFifo,
 	stream<fwdPolicy>& ibhDropMetaFifo,			// contains isDrop, ackOnly
-	//stream<cplMeta>& m_axis_rx_ack_meta,
+	//stream<ackMeta>& m_axis_rx_ack_meta,
 	//stream<ap_uint<16> >& stateTableInv,		// qpn of every QP set up again: its cached state is stale
 	ap_uint<32>& regInvalidPsnDropCount
 ) {

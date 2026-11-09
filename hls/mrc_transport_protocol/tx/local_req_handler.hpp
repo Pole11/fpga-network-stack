@@ -52,6 +52,7 @@ void local_req_handler(
 #endif
 	{
 		s_axis_sq_meta.read(meta); 
+		meta.op_code = (mrcOpCode) (meta.op_code | 0xC0); // Coyote posts the 5-bit RC operation code (as for ib_transport_protocol): add the MRC transport class
 
 		std::cout << std::dec << "[LOCAL REQ HANDLER " << INSTID << "]: opcode: " << meta.op_code << 
 			", transmission: length: " << std::dec << meta.len << ", local addr: " << std::hex << meta.laddr << ", remote addres: " << meta.raddr << ", last: " << meta.lst << std::endl;
@@ -61,9 +62,11 @@ void local_req_handler(
 		{
 			tx_localTxMeta.write(event(meta.op_code, meta.qpn, meta.raddr, meta.len));
 			tx_local_memCmdFifo.write(memCmdInternal(meta.op_code, meta.qpn, meta.laddr, meta.len, meta.host, PKG_NR, meta.offs));	
-		}
 #ifdef RETRANS_EN
-		tx2retrans_insertAddrLen.write(retransAddrLen(meta.laddr, meta.raddr, meta.len, meta.lst, meta.offs, meta.host));
+			tx2retrans_insertAddrLen.write(retransAddrLen(meta.laddr, meta.raddr, meta.len, meta.lst, meta.offs, meta.host));
 #endif
+		}
+		else // MRC only supports RDMA Write (6.2.2): READ, SEND, ... are dropped
+			std::cout << "[LOCAL REQ HANDLER " << INSTID << "]: unsupported opcode " << meta.op_code << ", dropped" << std::endl;
 	}
 }

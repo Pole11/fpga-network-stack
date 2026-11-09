@@ -85,7 +85,8 @@ void mrc_transport_protocol(
 	stream<txMeta>& s_axis_sq_meta,
 
 	// ACKs
-	stream<cplMeta>& m_axis_rx_ack_meta,
+	stream<ackMeta>& m_axis_rx_ack_meta,
+	stream<immMeta>& m_axis_rx_imm_meta,
 
 	// RDMA
 	stream<memCmd>& m_axis_mem_write_cmd,
@@ -292,15 +293,11 @@ void mrc_transport_protocol(
 
 	// WriteIMM completions
 	static stream<rxImmReq> rxExh2immTable_req("rxExh2immTable_req");
-	static stream<cplMeta>  immTable2ackCpl("immTable2ackCpl");
 	#pragma HLS STREAM depth=8 variable=rxExh2immTable_req
-	#pragma HLS STREAM depth=4 variable=immTable2ackCpl
 #if defined( __VITIS_HLS__)
 	#pragma HLS aggregate  variable=rxExh2immTable_req compact=bit
-	#pragma HLS aggregate  variable=immTable2ackCpl compact=bit
 #else
 	#pragma HLS DATA_PACK variable=rxExh2immTable_req
-	#pragma HLS DATA_PACK variable=immTable2ackCpl
 #endif
 
 	static stream<ap_uint<16> > exh_lengthFifo("exh_lengthFifo");
@@ -499,7 +496,6 @@ void mrc_transport_protocol(
 #ifdef RETRANS_EN
 		retrans2rx_init,
 #endif
-		immTable2ackCpl,
 		rx_req2err_Fifo,
 		m_axis_rx_ack_meta
 	);
@@ -703,8 +699,8 @@ void mrc_transport_protocol(
 		msnTable2txExh_rsp
 	);
 
-	imm_table<INSTID>(rxExh2immTable_req, immTable2ackCpl);
-
+	imm_table<INSTID>(rxExh2immTable_req, m_axis_rx_imm_meta);
+	
     /*
 	read_req_table<INSTID>(	
 		tx_readReqTable_upd,
@@ -748,14 +744,15 @@ void mrc_transport_protocol(
 }
 
 #ifdef DBG_IBV
-#define mrc_transport_protocol_spec_decla(ninst)                 \
-template void mrc_transport_protocol<DATA_WIDTH, ninst>(		   	\
+#define mrc_transport_protocol_spec_decla(ninst)                \
+template void mrc_transport_protocol<DATA_WIDTH, ninst>(		\
 	stream<ipUdpMeta>& s_axis_rx_meta,		                    \
 	stream<net_axis<DATA_WIDTH> >& s_axis_rx_data,		        \
 	stream<ipUdpMeta>& m_axis_tx_meta,		                    \
 	stream<net_axis<DATA_WIDTH> >& m_axis_tx_data,		        \
 	stream<txMeta>& s_axis_sq_meta,		                       	\
-	stream<cplMeta>& m_axis_rx_ack_meta,		                \
+	stream<ackMeta>& m_axis_rx_ack_meta,		                \
+	stream<immMeta>& m_axis_rx_imm_meta,						\
 	stream<memCmd>& m_axis_mem_write_cmd,		                \
 	stream<memCmd>& m_axis_mem_read_cmd,		                \
 	stream<net_axis<DATA_WIDTH> >& m_axis_mem_write_data,		\
@@ -778,7 +775,8 @@ template void mrc_transport_protocol<DATA_WIDTH, ninst>(		   	\
 	stream<ipUdpMeta>& m_axis_tx_meta,		                    \
 	stream<net_axis<DATA_WIDTH> >& m_axis_tx_data,		        \
 	stream<txMeta>& s_axis_sq_meta,		                       	\
-	stream<cplMeta>& m_axis_rx_ack_meta,		                \
+	stream<ackMeta>& m_axis_rx_ack_meta,		                \
+	stream<immMeta>& m_axis_rx_imm_meta,		                \
 	stream<memCmd>& m_axis_mem_write_cmd,		                \
 	stream<memCmd>& m_axis_mem_read_cmd,		                \
 	stream<net_axis<DATA_WIDTH> >& m_axis_mem_write_data,		\

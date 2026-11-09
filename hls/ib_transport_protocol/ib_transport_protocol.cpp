@@ -2525,7 +2525,7 @@ void ib_transport_protocol(
 		regIbvCountRx
 	);
 
-	rshiftWordByOctet<net_axis<WIDTH>, WIDTH,11, INSTID>(((BTH_SIZE%WIDTH)/8), rx_ibh2shiftFifo, rx_shift2exhFifo);
+	rshiftWordByOffset<net_axis<WIDTH>, WIDTH, 11, ((BTH_SIZE%WIDTH)/8), INSTID>(rx_ibh2shiftFifo, rx_shift2exhFifo);
 
 	rx_process_exh<WIDTH, INSTID>(
 		rx_shift2exhFifo,
@@ -2614,10 +2614,10 @@ void ib_transport_protocol(
 	// RETH: 16 bytes
 	//TODO not required for AXI_WIDTH == 64, also this seems to have a bug, this goes together with the hack in process_exh where we don't write the first word out
 //#if AXI_WIDTH != 64
-	rshiftWordByOctet<net_axis<WIDTH>, WIDTH,12, INSTID>(((RETH_SIZE%WIDTH)/8), rx_exh2rethShiftFifo, rx_rethSift2mergerFifo);
+	rshiftWordByOffset<net_axis<WIDTH>, WIDTH, 12, ((RETH_SIZE%WIDTH)/8), INSTID>(rx_exh2rethShiftFifo, rx_rethSift2mergerFifo);
 //#endif
 	// AETH: 4 bytes
-	rshiftWordByOctet<net_axis<WIDTH>, WIDTH,13, INSTID>(((AETH_SIZE%WIDTH)/8), rx_exh2aethShiftFifo, rx_aethSift2mergerFifo);
+	rshiftWordByOffset<net_axis<WIDTH>, WIDTH, 13, ((AETH_SIZE%WIDTH)/8), INSTID>(rx_exh2aethShiftFifo, rx_aethSift2mergerFifo);
 
 	merge_rx_pkgs<WIDTH, INSTID>(rx_pkgShiftTypeFifo, rx_aethSift2mergerFifo, rx_rethSift2mergerFifo, rx_exhNoShiftFifo, m_axis_mem_write_data);
 
@@ -2664,9 +2664,9 @@ void ib_transport_protocol(
 	meta_merger<INSTID>(rx_ackEventFifo, rx_readEvenFifo, tx_appMetaFifo, tx_ibhconnTable_req, tx_ibhMetaFifo, tx_exhMetaFifo);
 
 	//Shift playload by 4 bytes for AETH (data from memory)
-	lshiftWordByOctet<WIDTH,12,INSTID>(((AETH_SIZE%WIDTH)/8), tx_split2aethShift, tx_aethShift2payFifo);
+	lshiftWordByOctet<WIDTH, 12, ((AETH_SIZE%WIDTH)/8), INSTID>(tx_split2aethShift, tx_aethShift2payFifo);
 	//Shift payload another 12 bytes for RETH (data from application)
-	lshiftWordByOctet<WIDTH,13,INSTID>(((RETH_SIZE%WIDTH)/8), tx_rethMerge2rethShift, tx_rethShift2payFifo);
+	lshiftWordByOctet<WIDTH, 13, ((RETH_SIZE%WIDTH)/8), INSTID>(tx_rethMerge2rethShift, tx_rethShift2payFifo);
 
 	//Generate EXH
 	generate_exh<WIDTH, INSTID>(	
@@ -2686,7 +2686,7 @@ void ib_transport_protocol(
 	append_payload<WIDTH, INSTID>(tx_packetInfoFifo, tx_exh2payFifo, tx_aethShift2payFifo, tx_rethShift2payFifo, tx_rawPayFifo, tx_exh2shiftFifo);
 
 	// BTH: 12 bytes
-	lshiftWordByOctet<WIDTH,11,INSTID>(((BTH_SIZE%WIDTH)/8), tx_exh2shiftFifo, tx_shift2ibhFifo);
+	lshiftWordByOctet<WIDTH, 11, ((BTH_SIZE%WIDTH)/8), INSTID>(tx_exh2shiftFifo, tx_shift2ibhFifo);
 	generate_ibh<WIDTH, INSTID>(	
 		tx_ibhMetaFifo,
 		tx_dstQpFifo,

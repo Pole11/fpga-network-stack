@@ -23,7 +23,7 @@ struct rxImmReq
 template <int INSTID = 0>
 void imm_table(
 	stream<rxImmReq>& rxExh2immTable_req,
-	stream<cplMeta>&  immTable2ackCpl
+    stream<immMeta>& m_axis_rx_imm_meta
 ) {
 #pragma HLS PIPELINE II=1
 #pragma HLS INLINE off
@@ -39,7 +39,7 @@ void imm_table(
 	if (req.immInc != 0)
 	{
 		ap_uint<32> imm = imm_table[req.qpn][req.head(MRC_MAX_WIMM_BITS - 1, 0)];
-		immTable2ackCpl.write(cplMeta(MRC_RDMA_WRITE_ONLY_IMM, req.qpn, PKG_HOST, 0, 0, PKG_F, imm));
+		m_axis_rx_imm_meta.write(immMeta(req.qpn, imm));
 		std::cout << std::hex << "[IMM TABLE " << INSTID << "]: completion qp " << req.qpn << " rqmsn " << req.head
 		          << " imm " << imm << std::dec << std::endl;
 		req.head++;

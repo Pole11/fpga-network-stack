@@ -523,6 +523,7 @@ void lshiftWordByOctet(	hls::stream<net_axis<W> >& input,
 						hls::stream<net_axis<W> >& output)
 {
 #pragma HLS inline off
+#pragma HLS pipeline II=1
 
 	const uint16_t offset = OFFSET;
 	static bool ls_firstWord = true;

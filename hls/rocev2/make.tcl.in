@@ -17,6 +17,9 @@ add_files ${CMAKE_CURRENT_SOURCE_DIR}/../mrc_transport_protocol/ib_utils.cpp -cf
 add_files ${CMAKE_CURRENT_SOURCE_DIR}/../mrc_transport_protocol/mrc_transport_protocol.cpp -cflags "-I${CMAKE_CURRENT_BINARY_DIR}"
 add_files ${CMAKE_CURRENT_SOURCE_DIR}/rocev2.cpp -cflags "-I${CMAKE_CURRENT_BINARY_DIR}"
 
+add_files ${CMAKE_CURRENT_SOURCE_DIR}/../${ROCE_TRANSPORT}_transport_protocol/ib_utils.cpp -cflags "-I${CMAKE_CURRENT_BINARY_DIR}"
+add_files ${CMAKE_CURRENT_SOURCE_DIR}/../${ROCE_TRANSPORT}_transport_protocol/${ROCE_TRANSPORT}_transport_protocol.cpp -cflags "-I${CMAKE_CURRENT_BINARY_DIR}"
+
 # config_rtl -disable_start_propagation
 config_rtl -reset all -reset_level low
 

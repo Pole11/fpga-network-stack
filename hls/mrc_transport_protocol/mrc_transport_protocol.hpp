@@ -258,7 +258,7 @@ struct txMeta
 };
 
 /* ACK meta */
-struct cplMeta 
+struct ackMeta 
 {
     mrcOpCode   op_code; // 32
 	ap_uint<16> qpn;
@@ -266,11 +266,21 @@ struct cplMeta
     ap_uint<4> dst;
     ap_uint<2> strm;
     ap_uint<1> lst;
-    ap_uint<32> imm; // ImmDt of a WriteIMM completion (op_code MRC_RDMA_WRITE_ONLY_IMM), 0 otherwise
 
-	cplMeta() {}
-	cplMeta(mrcOpCode op_code, ap_uint<16> qpn, ap_uint<1> host, ap_uint<4> dst, ap_uint<2> strm, ap_uint<1> lst, ap_uint<32> imm = 0)
-		: op_code(op_code), qpn(qpn), host(host), dst(dst), strm(strm),  lst(lst), imm(imm) {}
+	ackMeta() {}
+	ackMeta(mrcOpCode op_code, ap_uint<16> qpn, ap_uint<1> host, ap_uint<4> dst, ap_uint<2> strm, ap_uint<1> lst)
+		: op_code(op_code), qpn(qpn), host(host), dst(dst), strm(strm),  lst(lst) {}
+};
+
+/* WriteIMM completion (6.3.2): MRC only, kept out of ackMeta so that ackMeta stays identical to ib_transport_protocol */
+struct immMeta
+{
+	ap_uint<16> qpn;
+	ap_uint<32> imm;
+
+	immMeta() {}
+	immMeta(ap_uint<16> qpn, ap_uint<32> imm)
+		: qpn(qpn), imm(imm) {}
 };
 
 /* Event */
@@ -686,8 +696,9 @@ void mrc_transport_protocol(
 	hls::stream<txMeta>& s_axis_sq_meta,
 
 	// ACKs
-	hls::stream<cplMeta>& m_axis_rx_ack_meta,
-
+	hls::stream<ackMeta>& m_axis_rx_ack_meta,
+	hls::stream<immMeta>& m_axis_rx_imm_meta,
+	
 	// RDMA
 	hls::stream<memCmd>& m_axis_mem_write_cmd,
 	hls::stream<memCmd>& m_axis_mem_read_cmd,

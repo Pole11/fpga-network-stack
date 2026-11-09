@@ -35,9 +35,10 @@ struct ifMsnReq
 {
 	ap_uint<16> qpn;
 	ap_uint<32> r_key;
+	bool        init; // new connection: reset MSN and RQMSN too. false = update r_key only
 	ifMsnReq() {}
-	ifMsnReq(ap_uint<16> qpn, ap_uint<32> r_key)
-		:qpn(qpn), r_key(r_key) {}
+	ifMsnReq(ap_uint<16> qpn, ap_uint<32> r_key, bool init)
+		:qpn(qpn), r_key(r_key), init(init) {}
 };
 
 struct rxMsnReq
@@ -137,12 +138,15 @@ void msn_table(hls::stream<rxMsnReq>&		rxExh2msnTable_upd_req,
 	else if (!if2msnTable_init.empty()) //move up??
 	{
 		if2msnTable_init.read(ifRequest);
-		std::cout << std::hex << "[MSN TABLE " << INSTID << "]: MSN init for qpn " << ifRequest.qpn << std::endl;
-		msn_table[ifRequest.qpn].msn = 0;
-		msn_table[ifRequest.qpn].rqmsn = 1;
-		msn_table[ifRequest.qpn].vaddr = 0; //TODO requried?
-		msn_table[ifRequest.qpn].dma_length = 0;  //TODO requried?
+		std::cout << std::hex << "[MSN TABLE " << INSTID << "]: MSN init " << ifRequest.init << " for qpn " << ifRequest.qpn << std::endl;
 		msn_table[ifRequest.qpn].r_key = ifRequest.r_key;
-        msn_table[ifRequest.qpn].lst = 0;
+		if (ifRequest.init)
+		{
+			msn_table[ifRequest.qpn].msn = 0;
+			msn_table[ifRequest.qpn].rqmsn = 1;
+			msn_table[ifRequest.qpn].vaddr = 0; //TODO requried?
+			msn_table[ifRequest.qpn].dma_length = 0;  //TODO requried?
+			msn_table[ifRequest.qpn].lst = 0;
+		}
 	}
 }

@@ -30,6 +30,17 @@
 #include "rocev2_config.hpp"
 #include "rocev2.hpp"
 
+#ifdef ROCE_TRANSPORT_mrc
+// WriteIMM completions are not exported yet (the rocev2 interface stays the one of ib_transport_protocol): consume them so the RX path never stalls
+void drain_imm_meta(stream<immMeta>& rx_immMetaFifo)
+{
+#pragma HLS PIPELINE II=1
+#pragma HLS INLINE off
+	if (!rx_immMetaFifo.empty())
+		rx_immMetaFifo.read();
+}
+#endif
+
 template <int WIDTH>
 void rocev2(
 	hls::stream<net_axis<WIDTH> >& s_axis_rx_data, // from gap enforcer
@@ -92,6 +103,11 @@ void rocev2(
 	#pragma HLS STREAM depth=2 variable=tx_udp2ipMetaFifo
 	#pragma HLS STREAM depth=2 variable=tx_udp2ipFifo
 
+#ifdef ROCE_TRANSPORT_mrc
+	static stream<immMeta>	rx_immMetaFifo("rx_immMetaFifo");
+	#pragma HLS STREAM depth=2 variable=rx_immMetaFifo
+#endif
+
     /*
      * CRC
      */
@@ -146,17 +162,22 @@ void rocev2(
 		RDMA_DEFAULT_PORT
 	);
 
-	// here is the instantiation of the transport
-	/*
-	 * IB PROTOCOL
-	 */
-	mrc_transport_protocol<WIDTH, 0>(	
+	// here is the instantiation of the transport, chosen by ROCE_TRANSPORT
+#ifdef ROCE_TRANSPORT_mrc
+	mrc_transport_protocol<WIDTH, 0>(
+#else
+	ib_transport_protocol<WIDTH, 0>(
+#endif
 		rx_ipUdpMetaFifo,
 		rx_udp2ibFifo,
 		tx_ipUdpMetaFifo,
 		tx_ib2udpFifo,
 		s_axis_sq_meta,
 		m_axis_rx_ack_meta,
+#ifdef ROCE_TRANSPORT_mrc
+		rx_immMetaFifo,
+#endif
+		m_axis_mem_write_cmd,
 		m_axis_mem_write_cmd,
 		m_axis_mem_read_cmd,
 		m_axis_mem_write_data,
@@ -173,6 +194,11 @@ void rocev2(
 		regIbvCountRx,
         regIbvCountTx
 	);
+
+	// temporary workaround for the fact that the mrc_transport_protocol interface does not export WriteIMM completions yet
+#ifdef ROCE_TRANSPORT_mrc
+	drain_imm_meta(rx_immMetaFifo);
+#endif
     
 }
 
