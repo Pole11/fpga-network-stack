@@ -55,6 +55,15 @@ void rx_req_fsm(
 		{
 			stateTable_rsp.read(qp);
 
+			// a QP that does not exist has no requestor state: silently drop, nothing is written or released
+			if (!qp.valid)
+			{
+				std::cout << std::hex << "[RX REQ FSM " << INSTID << "]: invalid qp " << m.dest_qp << ", opcode "
+				          << m.op_code << " dropped" << std::dec << std::endl;
+				state = LOAD;
+				break;
+			}
+
 			ap_uint<16> qpn      = m.dest_qp(15, 0);
 			ap_uint<24> unack    = qp.unack_psn;
 			ap_uint<3>  retries  = qp.retries;
@@ -64,8 +73,8 @@ void rx_req_fsm(
 			bool        hasCack  = false;  // this packet carries a cumulative ack (ACK or SACK)
 			ap_uint<24> cack     = 0;
 
-			// TODO (all opcodes) validate: dest_qp is a valid QP; spdcid == dest_qp[15:0] (SACK/NACK)
-
+  			// TODO (all opcodes) validate: spdcid == dest_qp[15:0] (SACK/NACK)
+			
 			switch (m.op_code)
 			{
 			case MRC_ACK:

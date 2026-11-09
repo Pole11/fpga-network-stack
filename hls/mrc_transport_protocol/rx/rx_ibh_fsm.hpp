@@ -73,7 +73,7 @@ void rx_ibh_fsm(
 			     
 
 			ap_uint<24> d = meta.psn - qpState.epsn; // distance from epsn
-			bool supported   = checkIfWrite(meta.op_code);
+			bool supported   = checkIfWrite(meta.op_code) && qpState.valid; // a Write to a QP that exists
 			bool accepted    = supported && d < MRC_MPR && !qpState.bitmap[d];
 			bool outOfWindow = d >= MRC_MPR && d <= 0x800000;
 
@@ -133,9 +133,9 @@ void rx_ibh_fsm(
 				else if (n == 0 && !meta.ackReq && (ap_int<24>)(meta.psn - qpState.lowestUnsackedPsn) < 0) // a lower PSN packet arrived
 					qpState.lowestUnsackedPsn = meta.psn;
 			}
-			else if (!supported) // not a Write: silently drop it, the QP state is not touched
+			else if (!supported) // not a Write or invalid QP: silently drop it, the QP state is not touched
 			{
-				std::cout << std::hex << "[RX IBH FSM " << INSTID << "]: unsupported opcode " << meta.op_code << ", dropped" << std::dec << std::endl;
+				std::cout << std::hex << "[RX IBH FSM " << INSTID << "]: unsupported opcode " << meta.op_code << " or invalid qp " << meta.dest_qp << ", dropped" << std::dec << std::endl;
 				ibhDropFifo.write(true);
 				ibhDropMetaFifo.write(fwdPolicy(true, false));
 			}

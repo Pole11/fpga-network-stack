@@ -58,6 +58,7 @@ struct stateTableEntry
 	// requestor reliability state, written only by rx_req_fsm (and qp_interface at setup)
 	ap_uint<3>  req_retries;    // NACK retries since req_old_unack last advanced
 	bool        req_error;      // QP in ERROR on the requestor side (Class B)
+	bool        valid;          // set up through qp_interface
 };
 
 struct ifStateReq
@@ -95,6 +96,7 @@ struct rxStateRsp
 	ap_uint<24> lowestUnsackedPsn;
 	ap_uint<32> rcvdBytes;
 	ap_uint<24> sackTriggerCnt;
+	bool valid; // the QP exists and has been set up
 
 	rxStateRsp() {}
 	rxStateRsp(ap_uint<24> epsn, ap_uint<24> old)
@@ -160,9 +162,10 @@ struct reqStateRsp
 	ap_uint<24> max_psn_sent;
 	ap_uint<3>  retries;
 	bool        error;
+	bool        valid; // the QP exists and has been set up
 	reqStateRsp() {}
-	reqStateRsp(ap_uint<24> unack, ap_uint<24> maxSent, ap_uint<3> retries, bool error)
-		: unack_psn(unack), max_psn_sent(maxSent), retries(retries), error(error) {}
+	reqStateRsp(ap_uint<24> unack, ap_uint<24> maxSent, ap_uint<3> retries, bool error, bool valid)
+		: unack_psn(unack), max_psn_sent(maxSent), retries(retries), error(error), valid(valid) {}
 };
 
 struct txStateReq
@@ -240,6 +243,7 @@ void state_table(
 				state_table[rxRequest.qpn].resp_lowest_unsacked_psn = rxRequest.lowestUnsackedPsn;
 				state_table[rxRequest.qpn].resp_rcvd_bytes          = rxRequest.rcvdBytes;
 				state_table[rxRequest.qpn].resp_sack_trigger_cnt    = rxRequest.sackTriggerCnt;
+				state_table[rxRequest.qpn].valid = true;
 			}
 		}
 		else if (!rxRequest.write)   
@@ -261,6 +265,7 @@ void state_table(
 				rsp.lowestUnsackedPsn = entry.resp_lowest_unsacked_psn;
 				rsp.rcvdBytes         = entry.resp_rcvd_bytes;
 				rsp.sackTriggerCnt    = entry.resp_sack_trigger_cnt;
+				rsp.valid             = entry.valid && rxRequest.qpn < MAX_QPS;
 				stateTable2rxIbh_rsp.write(rsp);
 			}
 		}
@@ -278,7 +283,7 @@ void state_table(
 		{
 			stateTableEntry entry = state_table[ctrlRequest.qpn % MAX_QPS];
 			stateTable2rxCtrl_rsp.write(reqStateRsp(entry.req_old_unack, entry.req_next_psn - 1,
-			                                        entry.req_retries, entry.req_error));
+										entry.req_retries, entry.req_error, entry.valid && ctrlRequest.qpn < MAX_QPS));
 		}
 	}
 	else if (!txIbh2stateTable_upd_req.empty())
@@ -321,6 +326,7 @@ void state_table(
 				state_table[ifRequest.qpn].resp_rcvd_bytes          = 0;
 				state_table[ifRequest.qpn].resp_sack_trigger_cnt    = 0;
 				//stateTable2rxIbh_inv.write(ifRequest.qpn);
+				state_table[ifRequest.qpn].valid = true;
 			} else {
 				state_table[ifRequest.qpn].req_next_psn = ifRequest.remote_psn;
 				state_table[ifRequest.qpn].req_old_unack = ifRequest.remote_psn;
