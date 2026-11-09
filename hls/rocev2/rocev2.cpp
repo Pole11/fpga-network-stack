@@ -30,17 +30,6 @@
 #include "rocev2_config.hpp"
 #include "rocev2.hpp"
 
-#ifdef ROCE_TRANSPORT_mrc
-// WriteIMM completions are not exported yet (the rocev2 interface stays the one of ib_transport_protocol): consume them so the RX path never stalls
-void drain_imm_meta(stream<immMeta>& rx_immMetaFifo)
-{
-#pragma HLS PIPELINE II=1
-#pragma HLS INLINE off
-	if (!rx_immMetaFifo.empty())
-		rx_immMetaFifo.read();
-}
-#endif
-
 template <int WIDTH>
 void rocev2(
 	hls::stream<net_axis<WIDTH> >& s_axis_rx_data, // from gap enforcer
@@ -51,6 +40,8 @@ void rocev2(
 
 	// ACKs
 	hls::stream<ackMeta>& m_axis_rx_ack_meta, // to user commands
+  	// WriteIMM completions (MRC only, the IB build never writes them)
+  	hls::stream<immMeta>& m_axis_rx_imm_meta, // to user commands
 				
 	// RDMA
 	hls::stream<memCmd>& m_axis_mem_write_cmd, // to memory
@@ -175,9 +166,8 @@ void rocev2(
 		s_axis_sq_meta,
 		m_axis_rx_ack_meta,
 #ifdef ROCE_TRANSPORT_mrc
-		rx_immMetaFifo,
+		m_axis_rx_imm_meta,
 #endif
-		m_axis_mem_write_cmd,
 		m_axis_mem_write_cmd,
 		m_axis_mem_read_cmd,
 		m_axis_mem_write_data,
@@ -194,11 +184,6 @@ void rocev2(
 		regIbvCountRx,
         regIbvCountTx
 	);
-
-	// temporary workaround for the fact that the mrc_transport_protocol interface does not export WriteIMM completions yet
-#ifdef ROCE_TRANSPORT_mrc
-	drain_imm_meta(rx_immMetaFifo);
-#endif
     
 }
 
@@ -210,6 +195,7 @@ void rocev2_top(
 	stream<txMeta>&	s_axis_sq_meta,
 
 	stream<ackMeta>& m_axis_rx_ack_meta,
+	stream<immMeta>& m_axis_rx_imm_meta
 				
 	//Memory
 	stream<memCmd>& m_axis_mem_write_cmd,
@@ -248,6 +234,8 @@ void rocev2_top(
 	// ACKs
 	#pragma HLS INTERFACE axis register port=m_axis_rx_ack_meta
 	#pragma HLS aggregate  variable=m_axis_rx_ack_meta compact=bit
+	#pragma HLS INTERFACE axis register port=m_axis_rx_imm_meta
+  	#pragma HLS aggregate  variable=m_axis_rx_imm_meta compact=bit
 
 	// RDMA
 	#pragma HLS INTERFACE axis register port=m_axis_mem_write_cmd
@@ -299,6 +287,7 @@ void rocev2_top(
 								
 		s_axis_sq_meta,
 		m_axis_rx_ack_meta,
+		m_axis_rx_imm_meta,
 								
 		m_axis_mem_write_cmd,
 		m_axis_mem_read_cmd,
@@ -329,6 +318,7 @@ void rocev2_top(
 	stream<txMeta>&	s_axis_sq_meta,
 
 	stream<ackMeta>& m_axis_rx_ack_meta,
+	stream<immMeta>& m_axis_rx_imm_meta,
 				
 	//Memory
 	stream<memCmd>& m_axis_mem_write_cmd,
@@ -367,6 +357,8 @@ void rocev2_top(
 	// ACKs
 	#pragma HLS INTERFACE axis register port=m_axis_rx_ack_meta
 	#pragma HLS DATA_PACK variable=m_axis_rx_ack_meta
+	#pragma HLS INTERFACE axis register port=m_axis_rx_imm_meta
+  	#pragma HLS DATA_PACK  variable=m_axis_rx_imm_meta compact=bit
 
 	// RDMA
 	#pragma HLS INTERFACE axis register port=m_axis_mem_write_cmd
@@ -402,6 +394,7 @@ void rocev2_top(
 								
 		s_axis_sq_meta,
 		m_axis_rx_ack_meta,
+		m_axis_rx_imm_meta,
 								
 		m_axis_mem_write_cmd,
 		m_axis_mem_read_cmd,
