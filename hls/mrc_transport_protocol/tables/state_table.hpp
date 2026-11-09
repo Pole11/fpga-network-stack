@@ -57,8 +57,7 @@ struct stateTableEntry
 	ap_uint<3>	retryCounter;   // responder: RC NAK logic in rx_ibh_fsm
 	// requestor reliability state, written only by rx_req_fsm (and qp_interface at setup)
 	ap_uint<3>  req_retries;    // NACK retries since req_old_unack last advanced
-	bool        req_error;      // QP in ERROR on the requestor side (Class B)
-	bool        valid;          // set up through qp_interface
+	qpState     state;          // RESET until set up, READY_SEND (RTS) after a full setup, ERROR when the requestor gives up
 };
 
 struct ifStateReq
@@ -140,7 +139,7 @@ struct rxStateReq
 //                  Advanced by the cack_psn of SACKs and transport ACKs.
 //   max_psn_sent = req_next_psn - 1 (req_next_psn is written by TX)
 //   retries      = NACK retries since unack_psn last advanced (Table 7-3)
-//   error        = QP in ERROR on the requestor side (Class B, Table 6-12)
+//   error        = request: move the QP to ERROR (Class B, Table 6-12). Response: state == ERROR
 // ------------------------------------------------------------------------------------------------
 struct reqStateReq
 {
@@ -243,7 +242,6 @@ void state_table(
 				state_table[rxRequest.qpn].resp_lowest_unsacked_psn = rxRequest.lowestUnsackedPsn;
 				state_table[rxRequest.qpn].resp_rcvd_bytes          = rxRequest.rcvdBytes;
 				state_table[rxRequest.qpn].resp_sack_trigger_cnt    = rxRequest.sackTriggerCnt;
-				state_table[rxRequest.qpn].valid = true;
 			}
 		}
 		else if (!rxRequest.write)   
@@ -265,7 +263,7 @@ void state_table(
 				rsp.lowestUnsackedPsn = entry.resp_lowest_unsacked_psn;
 				rsp.rcvdBytes         = entry.resp_rcvd_bytes;
 				rsp.sackTriggerCnt    = entry.resp_sack_trigger_cnt;
-				rsp.valid             = entry.valid && rxRequest.qpn < MAX_QPS;
+				rsp.valid             = entry.state == READY_SEND && rxRequest.qpn < MAX_QPS;
 				stateTable2rxIbh_rsp.write(rsp);
 			}
 		}
@@ -277,13 +275,14 @@ void state_table(
 		{
 			state_table[ctrlRequest.qpn].req_old_unack = ctrlRequest.unack_psn;
 			state_table[ctrlRequest.qpn].req_retries   = ctrlRequest.retries;
-			state_table[ctrlRequest.qpn].req_error     = ctrlRequest.error;
+			if (ctrlRequest.error)
+				state_table[ctrlRequest.qpn].state     = ERROR; // 7.4.2, 7.5.3, Table 7-3: incoming packets are dropped from now on
 		}
 		else if (!ctrlRequest.write)
 		{
 			stateTableEntry entry = state_table[ctrlRequest.qpn % MAX_QPS];
 			stateTable2rxCtrl_rsp.write(reqStateRsp(entry.req_old_unack, entry.req_next_psn - 1,
-										entry.req_retries, entry.req_error, entry.valid && ctrlRequest.qpn < MAX_QPS));
+			                                        entry.req_retries, entry.state == ERROR, entry.state == READY_SEND && ctrlRequest.qpn < MAX_QPS));
 		}
 	}
 	else if (!txIbh2stateTable_upd_req.empty())
@@ -304,7 +303,6 @@ void state_table(
 		if (ifRequest.write && ifRequest.qpn < MAX_QPS)
 		{
 			std::cout << std::hex << "[STATE TABLE " << INSTID << "]: setup new connection, psn " << ifRequest.remote_psn << std::endl;
-			//state_table[ifRequest.qpn].state = ifRequest.newState;
 			//state_table[ifRequest.qpn].prevOpCode = RC_RDMA_WRITE_LAST;
 			if(!ifRequest.selective_update_remote_psn) { // ful setup
 				state_table[ifRequest.qpn].resp_epsn = ifRequest.local_psn;
@@ -313,7 +311,6 @@ void state_table(
 				state_table[ifRequest.qpn].req_old_unack = ifRequest.remote_psn;
 				state_table[ifRequest.qpn].req_old_valid = ifRequest.remote_psn;
 				state_table[ifRequest.qpn].req_retries = 0;
-				state_table[ifRequest.qpn].req_error   = false;
 				state_table[ifRequest.qpn].retryCounter = 0xF;
 				
 				state_table[ifRequest.qpn].resp_bitmap  = 0;
@@ -326,13 +323,12 @@ void state_table(
 				state_table[ifRequest.qpn].resp_rcvd_bytes          = 0;
 				state_table[ifRequest.qpn].resp_sack_trigger_cnt    = 0;
 				//stateTable2rxIbh_inv.write(ifRequest.qpn);
-				state_table[ifRequest.qpn].valid = true;
+				state_table[ifRequest.qpn].state = READY_SEND; // Coyote always sends new_state = 0: a full setup is the move to RTS
 			} else {
 				state_table[ifRequest.qpn].req_next_psn = ifRequest.remote_psn;
 				state_table[ifRequest.qpn].req_old_unack = ifRequest.remote_psn;
 				state_table[ifRequest.qpn].req_old_valid = ifRequest.remote_psn;
 				state_table[ifRequest.qpn].req_retries = 0;
-				state_table[ifRequest.qpn].req_error   = false;
 			}
 			//state_table[ifRequest.qpn].sendNAK = false;
 
