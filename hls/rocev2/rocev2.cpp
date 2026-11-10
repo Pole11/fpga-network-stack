@@ -94,11 +94,6 @@ void rocev2(
 	#pragma HLS STREAM depth=2 variable=tx_udp2ipMetaFifo
 	#pragma HLS STREAM depth=2 variable=tx_udp2ipFifo
 
-#ifdef ROCE_TRANSPORT_mrc
-	static stream<immMeta>	rx_immMetaFifo("rx_immMetaFifo");
-	#pragma HLS STREAM depth=2 variable=rx_immMetaFifo
-#endif
-
     /*
      * CRC
      */
@@ -195,7 +190,7 @@ void rocev2_top(
 	stream<txMeta>&	s_axis_sq_meta,
 
 	stream<ackMeta>& m_axis_rx_ack_meta,
-	stream<immMeta>& m_axis_rx_imm_meta
+	stream<immMeta>& m_axis_rx_imm_meta,
 				
 	//Memory
 	stream<memCmd>& m_axis_mem_write_cmd,
@@ -358,7 +353,7 @@ void rocev2_top(
 	#pragma HLS INTERFACE axis register port=m_axis_rx_ack_meta
 	#pragma HLS DATA_PACK variable=m_axis_rx_ack_meta
 	#pragma HLS INTERFACE axis register port=m_axis_rx_imm_meta
-  	#pragma HLS DATA_PACK  variable=m_axis_rx_imm_meta compact=bit
+  	#pragma HLS DATA_PACK  variable=m_axis_rx_imm_meta 
 
 	// RDMA
 	#pragma HLS INTERFACE axis register port=m_axis_mem_write_cmd

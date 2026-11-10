@@ -81,12 +81,6 @@ void rx_exh_fsm(
 			// packets before it, and its ImmDt (immMeta.last = 1 on the last one) can be delivered
 			memoryWriteCmd.write(memCmd(meta.op_code, meta.dest_qp, (meta.immInc != 0) ? PKG_F : PKG_NF,
 			                            rdmaHeader.getVirtualAddress(), payLoadLength, PKG_NR, PKG_HOST, 0));
-
-			// probably the lastmap should be used to send the signal when a message completes
-			// note that this line is coalescing message completions, which is wrong for MRC!
-			// completions is done by write immediates, so you need to keep track of them
-			//memoryWriteCmd.write(memCmd(meta.op_code, meta.dest_qp, (meta.immInc != 0) ? PKG_F : PKG_NF,
-            //                			rdmaHeader.getVirtualAddress(), payLoadLength, PKG_NR, PKG_HOST, 0));
 			
 			if (immPkt || meta.immInc != 0)
 				rxExh2immTable_req.write(rxImmReq(meta.dest_qp, immPkt, exHeader.mrc.rqmsn, exHeader.mrc.immDt, dmaMeta.rqmsn, meta.immInc));
