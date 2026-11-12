@@ -50,6 +50,7 @@ struct stateTableEntry
 	ap_uint<32> resp_rcvd_bytes;
 	ap_uint<24> resp_sack_trigger_cnt;
 	ap_uint<16> resp_rqmsn; // RQMSN of the oldest WriteIMM not completed yet: its ImmDt slot is the head of the ring (6.3.3). Single source of truth, imm_table gets it via ibhMeta.rqmsnHead
+	ap_uint<16> resp_recvs; // receive WQEs posted by software and not consumed yet: one per WriteIMM completion (6.3.3)
 
 	ap_uint<24> req_next_psn;
 	ap_uint<24> req_old_unack;
@@ -68,14 +69,19 @@ struct ifStateReq
 	ap_uint<24> remote_psn;
 	ap_uint<24> local_psn;
 	bool 		selective_update_remote_psn;
+	bool		post_recv; // add recvs receive WQEs to the QP
+	ap_uint<16> recvs;
 	bool		write;
+	
 	ifStateReq() {}
 	ifStateReq(ap_uint<24> qpn)
-		:qpn(qpn), write(false) {}
+		:qpn(qpn), post_recv(false), write(false) {}
 	ifStateReq(ap_uint<16> qpn, qpState s, ap_uint<24> rpsn, ap_uint<24> lpsn)
-		:qpn(qpn), newState(s), remote_psn(rpsn), local_psn(lpsn), selective_update_remote_psn(false), write(true) {}
+		:qpn(qpn), newState(s), remote_psn(rpsn), local_psn(lpsn), selective_update_remote_psn(false), post_recv(false), write(true) {}
 	ifStateReq(ap_uint<16> qpn, ap_uint<24> rpsn, bool selective_update_rpsn)
-		:qpn(qpn), remote_psn(rpsn), selective_update_remote_psn(selective_update_rpsn), write(true) {}
+		:qpn(qpn), remote_psn(rpsn), selective_update_remote_psn(selective_update_rpsn), post_recv(false), write(true) {}
+	ifStateReq(ap_uint<16> qpn, ap_uint<16> recvs)
+		:qpn(qpn), selective_update_remote_psn(false), post_recv(true), recvs(recvs), write(true) {}
 };
 
 struct rxStateRsp
@@ -97,6 +103,7 @@ struct rxStateRsp
 	ap_uint<32> rcvdBytes;
 	ap_uint<24> sackTriggerCnt;
 	ap_uint<16> rqmsn; // RQMSN of the oldest WriteIMM not completed yet: its ImmDt slot is the head of the ring (6.3.3)
+	ap_uint<16> recvs;
 	bool valid; // the QP exists and has been set up
 
 	rxStateRsp() {}
@@ -124,14 +131,16 @@ struct rxStateReq
 	ap_uint<32> rcvdBytes;
 	ap_uint<24> sackTriggerCnt;
 	ap_uint<16> rqmsn;
-  	bool        error; // move the QP to ERROR (Responder Class C, Table 6-15)
+	ap_uint<16> recvsUsed; // receive WQEs consumed: subtracted, not written, so that a post served between the read and this write is kept
+  	
+	bool        error; // move the QP to ERROR (Responder Class C, Table 6-15)
 
-  	rxStateReq() :isResponse(false), write(false), error(false) {}
-  	rxStateReq(ap_uint<24> qpn, bool isRsp)
-  		:qpn(qpn), isResponse(isRsp), write(false), error(false) {}
-  	rxStateReq(ap_uint<16> qpn, const rxStateRsp& s)
+	rxStateReq() :isResponse(false), write(false), recvsUsed(0), error(false) {}
+	rxStateReq(ap_uint<24> qpn, bool isRsp)
+		:qpn(qpn), isResponse(isRsp), write(false), recvsUsed(0), error(false) {}
+	rxStateReq(ap_uint<16> qpn, const rxStateRsp& s)
   		:qpn(qpn), epsn(s.epsn), retryCounter(0x7), isResponse(false), write(true), bitmap(s.bitmap), lastmap(s.lastmap), immmap(s.immmap), prevAr(s.prevAr),
-  		 maxRcvPsn(s.maxRcvPsn), lowestUnsackedPsn(s.lowestUnsackedPsn), rcvdBytes(s.rcvdBytes), sackTriggerCnt(s.sackTriggerCnt), rqmsn(s.rqmsn), error(false) {}
+  		 maxRcvPsn(s.maxRcvPsn), lowestUnsackedPsn(s.lowestUnsackedPsn), rcvdBytes(s.rcvdBytes), sackTriggerCnt(s.sackTriggerCnt), rqmsn(s.rqmsn), recvsUsed(0), error(false) {}
 };
 
 // ------------------------------------------------------------------------------------------------
@@ -246,6 +255,7 @@ void state_table(
 				state_table[rxRequest.qpn].resp_rcvd_bytes          = rxRequest.rcvdBytes;
 				state_table[rxRequest.qpn].resp_sack_trigger_cnt    = rxRequest.sackTriggerCnt;
 				state_table[rxRequest.qpn].resp_rqmsn               = rxRequest.rqmsn;
+				state_table[rxRequest.qpn].resp_recvs              -= rxRequest.recvsUsed;
   				if (rxRequest.error)
   					state_table[rxRequest.qpn].state                = ERROR; // incoming packets are dropped from now on
 			}
@@ -270,6 +280,7 @@ void state_table(
 				rsp.rcvdBytes         = entry.resp_rcvd_bytes;
 				rsp.sackTriggerCnt    = entry.resp_sack_trigger_cnt;
 				rsp.rqmsn = entry.resp_rqmsn;
+				rsp.recvs = entry.resp_recvs;
 				rsp.valid             = entry.state == READY_SEND && rxRequest.qpn < MAX_QPS;
 				stateTable2rxIbh_rsp.write(rsp);
 			}
@@ -311,7 +322,9 @@ void state_table(
 		{
 			std::cout << std::hex << "[STATE TABLE " << INSTID << "]: setup new connection, psn " << ifRequest.remote_psn << std::endl;
 			//state_table[ifRequest.qpn].prevOpCode = RC_RDMA_WRITE_LAST;
-			if(!ifRequest.selective_update_remote_psn) { // ful setup
+			if (ifRequest.post_recv) { // receive WQEs posted by software
+				state_table[ifRequest.qpn].resp_recvs += ifRequest.recvs;
+			} else if(!ifRequest.selective_update_remote_psn) { // ful setup
 				state_table[ifRequest.qpn].resp_epsn = ifRequest.local_psn;
 				state_table[ifRequest.qpn].resp_old_outstanding = ifRequest.local_psn;
 				state_table[ifRequest.qpn].req_next_psn = ifRequest.remote_psn;
@@ -329,7 +342,8 @@ void state_table(
 				state_table[ifRequest.qpn].resp_lowest_unsacked_psn = ifRequest.local_psn - 1;
 				state_table[ifRequest.qpn].resp_rcvd_bytes          = 0;
 				state_table[ifRequest.qpn].resp_sack_trigger_cnt    = 0;
-				state_table[ifRequest.qpn].resp_rqmsn = 1; // the first WriteIMM has RQMSN 1
+				state_table[ifRequest.qpn].resp_rqmsn               = 1; // like msn_table: the first WriteIMM has RQMSN 1
+				state_table[ifRequest.qpn].resp_recvs               = 0; // receives are posted after the setup
 				//stateTable2rxIbh_inv.write(ifRequest.qpn);
 				state_table[ifRequest.qpn].state = READY_SEND; // Coyote always sends new_state = 0: a full setup is the move to RTS
 			} else {

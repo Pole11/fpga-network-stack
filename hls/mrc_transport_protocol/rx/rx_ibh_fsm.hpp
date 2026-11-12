@@ -93,10 +93,11 @@ void rx_ibh_fsm(
 			qpState.rcvdBytes      += udpLen + 40; // nominal_pktsize (8.3.1)
 			qpState.sackTriggerCnt += (udpLen > hdrLen + 1024) ? (ap_uint<16>)(udpLen - hdrLen) : (ap_uint<16>)1024; // max(payload, MIN_ACK_PACKET_SIZE), at least 1024
 
-			if (accepted) // packet is inside the window
+			bool noRecv = false;
+			ap_uint<16> recvsUsed = 0;
+			if (accepted) // packet is inside the window			
 			{
-				ibhDropFifo.write(false);
-				ibhDropMetaFifo.write(fwdPolicy(false, false));
+
 
 				if (d >= (ap_uint<24>)(qpState.maxRcvPsn - qpState.epsn + 1))
 					qpState.maxRcvPsn = meta.psn;
@@ -137,6 +138,25 @@ void rx_ibh_fsm(
 					qpState.lowestUnsackedPsn = meta.cack;
 				else if (n == 0 && !meta.ackReq && (ap_int<24>)(meta.psn - qpState.lowestUnsackedPsn) < 0) // a lower PSN packet arrived
 					qpState.lowestUnsackedPsn = meta.psn;
+
+				// each WriteIMM completed consumes a posted receive WQE. Without one: NAK Remote Operational Error, QP to ERROR,
+				// packet dropped and none of its completions released (6.3.3, Table 6-15)
+				noRecv = meta.immInc > qpState.recvs;
+				if (noRecv) // no WQE to consume
+				{
+					std::cout << std::hex << "[RX IBH FSM " << INSTID << "]: " << meta.immInc << " WriteIMM completion(s) and " << qpState.recvs
+					          << " receive WQE(s), NAK remote operational error" << std::dec << std::endl;
+					ibhEventFifo.write(ackEvent(meta.dest_qp, meta.psn, true, AETH_NAK_REMOTE_OP_ERR));
+					ibhDropFifo.write(true);
+					ibhDropMetaFifo.write(fwdPolicy(true, false));
+					meta.ackReq = false;
+				}
+				else // there are enough receive WQEs to consume
+				{
+					recvsUsed = meta.immInc; // the number of receive WQEs consumed by this packet, to be subtracted from the QP state in the state table
+					ibhDropFifo.write(false); 
+					ibhDropMetaFifo.write(fwdPolicy(false, false));
+				}
 			}
 			else if (not_duplicate) // inflight WriteIMM limit exceeded: NAK Invalid Request, QP to ERROR, packet dropped (Table 6-15)
 			{
@@ -187,10 +207,11 @@ void rx_ibh_fsm(
 					qpState.lowestUnsackedPsn += 64;
 					qpState.sackTriggerCnt = 0;
 				}
-				if (accepted)
+				if (accepted && !noRecv)
 					metaOut.write(meta);
 				rxStateReq upd(meta.dest_qp, qpState); // probably not the cleanest way to wrap data
-				upd.error = not_duplicate && wimmLimit;
+				upd.error = (not_duplicate && wimmLimit) || noRecv;
+				upd.recvsUsed = recvsUsed;
 				stateTable_upd_req.write(upd);
 			}
 

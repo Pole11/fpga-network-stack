@@ -42,6 +42,9 @@ void qp_interface(
 			} else if (context.virtual_address == 0xFEEDBEEF) {
 				// Update of the remote PSN only: Special call to the qpi2stateTable_upd_req
 				qpi2stateTable_upd_req.write(ifStateReq(context.qp_num, context.remote_psn, true));
+			} else if (context.virtual_address == 0xCAFEBEEF) {
+				// Post receive WQEs: r_key carries how many
+				qpi2stateTable_upd_req.write(ifStateReq(context.qp_num, (ap_uint<16>) context.r_key));
 			} else {
 				// Default case: Call both, conventional call 
 				qpi2stateTable_upd_req.write(ifStateReq(context.qp_num, context.newState, context.remote_psn, context.local_psn));

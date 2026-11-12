@@ -2124,8 +2124,9 @@ void qp_interface(
 			} else if (context.virtual_address == 0xFEEDBEEF) {
 				// Update of the remote PSN only: Special call to the qpi2stateTable_upd_req
 				qpi2stateTable_upd_req.write(ifStateReq(context.qp_num, context.remote_psn, true));
-			} else {
-				// Default case: Call both, conventional call 
+			} else if (context.virtual_address == 0xCAFEBEEF) {
+				// MRC receive WQEs (post_recv): RC here has no use for them, ignored so that the QP is not set up again
+			} else {				// Default case: Call both, conventional call 
 				qpi2stateTable_upd_req.write(ifStateReq(context.qp_num, context.newState, context.remote_psn, context.local_psn));
 				if2msnTable_init.write(ifMsnReq(context.qp_num, context.r_key)); //TODO store virtual address somewhere??
 			}
