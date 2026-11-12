@@ -73,8 +73,11 @@ void rx_ibh_fsm(
 			     
 
 			ap_uint<24> d = meta.psn - qpState.epsn; // distance from epsn
-			bool supported   = checkIfWrite(meta.op_code) && qpState.valid && meta.dest_qp < MAX_QPS; // a Write to a QP that exists (all 24 bits)
-			bool accepted    = supported && d < MRC_MPR && !qpState.bitmap[d];
+			bool supported   	= checkIfWrite(meta.op_code) && qpState.valid && meta.dest_qp < MAX_QPS; // a Write to a QP that exists (all 24 bits)
+			bool not_duplicate	= supported && d < MRC_MPR && !qpState.bitmap[d]; // in the window and not received yet
+			// a WriteIMM whose ImmDt has no free slot: only RQMSN head .. head + MRC_MAX_WIMM - 1 fit in the ring (6.3.3)
+			bool wimmLimit   	= checkIfImmDt(meta.op_code) && (ap_uint<16>)(emeta.rqmsn - qpState.rqmsn) >= MRC_MAX_WIMM;
+			bool accepted    	= not_duplicate && !wimmLimit;
 			bool outOfWindow = d >= MRC_MPR && d <= 0x800000;
 
 			std::cout << std::hex << "[RX IBH FSM " << INSTID << "]: epsn " << qpState.epsn
@@ -122,6 +125,8 @@ void rx_ibh_fsm(
 				qpState.lastmap >>= n;
 				qpState.immmap  >>= n;
 				meta.cack = qpState.epsn - 1;
+				meta.rqmsnHead = qpState.rqmsn; // state_table is the only owner of the ring head, imm_table gets it through meta
+				qpState.rqmsn += meta.immInc;
 
 				qpState.prevAr = qpState.prevAr || meta.ackReq;
 				meta.ackReq    = meta.ackReq || meta.rtx || (qpState.prevAr && meta.cack == qpState.maxRcvPsn)
@@ -132,6 +137,15 @@ void rx_ibh_fsm(
 					qpState.lowestUnsackedPsn = meta.cack;
 				else if (n == 0 && !meta.ackReq && (ap_int<24>)(meta.psn - qpState.lowestUnsackedPsn) < 0) // a lower PSN packet arrived
 					qpState.lowestUnsackedPsn = meta.psn;
+			}
+			else if (not_duplicate) // inflight WriteIMM limit exceeded: NAK Invalid Request, QP to ERROR, packet dropped (Table 6-15)
+			{
+				std::cout << std::hex << "[RX IBH FSM " << INSTID << "]: rqmsn " << emeta.rqmsn << " beyond max_wimm_inflight from " << qpState.rqmsn
+				          << ", NAK invalid request" << std::dec << std::endl;
+				ibhEventFifo.write(ackEvent(meta.dest_qp, meta.psn, true, AETH_NAK_INVALID_REQ));
+				ibhDropFifo.write(true);
+				ibhDropMetaFifo.write(fwdPolicy(true, false));
+				meta.ackReq = false;
 			}
 			else if (!supported) // not a Write or invalid QP: silently drop it, the QP state is not touched
 			{
@@ -175,7 +189,9 @@ void rx_ibh_fsm(
 				}
 				if (accepted)
 					metaOut.write(meta);
-				stateTable_upd_req.write(rxStateReq(meta.dest_qp, qpState)); // probably not the cleanest way to wrap data
+				rxStateReq upd(meta.dest_qp, qpState); // probably not the cleanest way to wrap data
+				upd.error = not_duplicate && wimmLimit;
+				stateTable_upd_req.write(upd);
 			}
 
 			//cacheState = qpState;

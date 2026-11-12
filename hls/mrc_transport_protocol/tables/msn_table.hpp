@@ -35,7 +35,7 @@ struct ifMsnReq
 {
 	ap_uint<16> qpn;
 	ap_uint<32> r_key;
-	bool        init; // new connection: reset MSN and RQMSN too. false = update r_key only
+	bool        init; // new connection: reset MSN too. false = update r_key only
 	ifMsnReq() {}
 	ifMsnReq(ap_uint<16> qpn, ap_uint<32> r_key, bool init)
 		:qpn(qpn), r_key(r_key), init(init) {}
@@ -45,7 +45,6 @@ struct rxMsnReq
 {
 	ap_uint<16> qpn;
 	ap_uint<24> msn;
-	ap_uint<16> rqmsn;
 	ap_uint<64> vaddr;
 	ap_uint<32> dma_length;
     ap_uint<1>  lst;
@@ -54,8 +53,8 @@ struct rxMsnReq
 		:write(false) {}
 	rxMsnReq(ap_uint<16> qpn)
 		:qpn(qpn), write(false) {}
-	rxMsnReq(ap_uint<16> qpn, ap_uint<24> msn, ap_uint<16> rqmsn)
-			:qpn(qpn), msn(msn), rqmsn(rqmsn), vaddr(0), dma_length(0), lst(0), write(true) {}
+	rxMsnReq(ap_uint<16> qpn, ap_uint<24> msn)
+			:qpn(qpn), msn(msn), vaddr(0), dma_length(0), lst(0), write(true) {}
 	rxMsnReq(ap_uint<16> qpn, ap_uint<24> msn, ap_uint<64> vaddr, ap_uint<32> len, ap_uint<1> lst)
 		:qpn(qpn), msn(msn), vaddr(vaddr), dma_length(len), lst(lst), write(true) {}
 };
@@ -76,7 +75,6 @@ struct txMsnRsp
 struct dmaState
 {
 	ap_uint<24> msn;
-	ap_uint<16> rqmsn; // RQMSN of the next WriteIMM to complete
 	ap_uint<64> vaddr;
 	ap_uint<32> dma_length;
 	ap_uint<32> r_key;
@@ -120,7 +118,6 @@ void msn_table(hls::stream<rxMsnReq>&		rxExh2msnTable_upd_req,
 		if (rxRequest.write)
 		{
 			msn_table[rxRequest.qpn].msn = rxRequest.msn;
-			msn_table[rxRequest.qpn].rqmsn = rxRequest.rqmsn;
 			msn_table[rxRequest.qpn].vaddr = rxRequest.vaddr;
 			msn_table[rxRequest.qpn].dma_length= rxRequest.dma_length;
             msn_table[rxRequest.qpn].lst = rxRequest.lst;
@@ -143,7 +140,6 @@ void msn_table(hls::stream<rxMsnReq>&		rxExh2msnTable_upd_req,
 		if (ifRequest.init)
 		{
 			msn_table[ifRequest.qpn].msn = 0;
-			msn_table[ifRequest.qpn].rqmsn = 1;
 			msn_table[ifRequest.qpn].vaddr = 0; //TODO requried?
 			msn_table[ifRequest.qpn].dma_length = 0;  //TODO requried?
 			msn_table[ifRequest.qpn].lst = 0;

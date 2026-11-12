@@ -292,13 +292,15 @@ struct ackEvent
 	ap_uint<24>	psn;
 	bool		validPsn;
 	bool		isNak;
+	ap_uint<5>	nakCode; // AETH NAK code (aethNakCode), only when isNak
+	
 	ackEvent() {}
 	ackEvent(ap_uint<24> qpn)
 		:qpn(qpn), psn(0), validPsn(false), isNak(false) {}
 	ackEvent(ap_uint<24> qpn, bool nak)
-			:qpn(qpn), psn(0), validPsn(false), isNak(nak) {}
-	ackEvent(ap_uint<24> qp, ap_uint<24> psn, bool nak)
-			:qpn(qp), psn(psn), validPsn(true), isNak(nak) {}
+			:qpn(qpn), psn(0), validPsn(false), isNak(nak), nakCode(0) {}
+	ackEvent(ap_uint<24> qp, ap_uint<24> psn, bool nak, ap_uint<5> nakCode = 0)
+			:qpn(qp), psn(psn), validPsn(true), isNak(nak), nakCode(nakCode) {}
 };
 
 //TODO create readEvent
@@ -312,12 +314,14 @@ struct event
 	ap_uint<24>	psn;
 	bool		validPsn;
 	bool		isNak;
+	ap_uint<5>	nakCode;
+
 	event()
 		:op_code(MRC_ACK), validPsn(false), isNak(false) {}
 	event(mrcOpCode op, ap_uint<24> qp)
 		:op_code(op), qpn(qp), validPsn(false), isNak(false) {}
 	event(ackEvent& aev)
-		:op_code(MRC_ACK), qpn(aev.qpn), psn(aev.psn), validPsn(aev.validPsn), isNak(aev.isNak) {}
+		:op_code(MRC_ACK), qpn(aev.qpn), psn(aev.psn), validPsn(aev.validPsn), isNak(aev.isNak), nakCode(aev.nakCode) {}
 	/*event(mrcOpCode op, ap_uint<24> qp, ap_uint<24> psn, bool nak)
 		:op_code(op), qpn(qp), psn(psn), validPsn(true), isNak(nak) {}*/
 	event(mrcOpCode op, ap_uint<24> qp, ap_uint<32> len)
@@ -508,6 +512,7 @@ struct ibhMeta
 	ap_uint<2>  padCnt = 0; // BTH.PadCnt, 0 for every constructor that does not set it
 	ap_uint<8>  oooCount;   // rx_ooo_count, max 127 with MPR = 128
 	ap_uint<8>  immInc;	// how many of the msnInc messages are WriteIMM
+	ap_uint<16> rqmsnHead; // RQMSN ring head before this packet (copy of state_table.resp_rqmsn): the first of the immInc completions (6.3.3)
 
 	ibhMeta()
 		:op_code(MRC_ACK), ackReq(false), rtx(false), ts(false) {}
@@ -524,9 +529,11 @@ struct ibhMeta
 struct exhMeta
 {
 	ap_uint<22> numPkg; //TODO how many bits does this need?
+	ap_uint<16> rqmsn;  // METH RQMSN, for the max_wimm_inflight check in rx_ibh_fsm
 
-	exhMeta() :numPkg(1) {}
-	exhMeta(ap_uint<22> numPkg) :numPkg(numPkg) {}
+	exhMeta() :numPkg(1), rqmsn(0) {}
+	exhMeta(ap_uint<22> numPkg) :numPkg(numPkg), rqmsn(0) {}
+	exhMeta(ap_uint<22> numPkg, ap_uint<16> rqmsn) :numPkg(numPkg), rqmsn(rqmsn) {}
 };
 
 /**

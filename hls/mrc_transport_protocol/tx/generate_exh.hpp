@@ -138,9 +138,8 @@ void generate_exh(
 				}
 				else
 				{
-					//PSN SEQ error
-					std::cout << "[GENERATE EXH " << INSTID << "]: psn seq error" << std::endl;
-					ackHeader.setSyndrome(0x60);
+					std::cout << "[GENERATE EXH " << INSTID << "]: NAK code " << meta.nakCode << std::endl;
+					ackHeader.setSyndrome((AETH_NAK << 5) | meta.nakCode);
 				}
 				std::cout << "[GENERATE EXH " << INSTID << "]: MRC_ACK with qpn " << meta.qpn << ", psn " << meta.psn << std::endl;
 				ackHeader.setMsn(msnMeta.msn);

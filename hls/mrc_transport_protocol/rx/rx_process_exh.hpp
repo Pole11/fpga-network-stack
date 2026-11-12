@@ -67,8 +67,8 @@ void rx_process_exh( // probably it is useless now ...
 			// non-IMM: same word as before. IMM: wait for the ImmDt (or the end of a malformed packet)
 			if (!metaWritten && rdmaHeader.isReady() && (!hasImmDt || rethImmHeader.isReady() || currWord.last))
 			{
-				exhMetaFifo.write(exhMeta()); 
-
+				exhMetaFifo.write(exhMeta(1, opMeta.mrc.rqmsn));
+				
 				ExHeader<WIDTH> exh(rdmaHeader);
 				exh.mrc = opMeta.mrc;
 				if (hasImmDt)

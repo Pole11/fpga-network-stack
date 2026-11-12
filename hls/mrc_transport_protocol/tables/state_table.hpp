@@ -49,6 +49,7 @@ struct stateTableEntry
 	ap_uint<24> resp_lowest_unsacked_psn;
 	ap_uint<32> resp_rcvd_bytes;
 	ap_uint<24> resp_sack_trigger_cnt;
+	ap_uint<16> resp_rqmsn; // RQMSN of the oldest WriteIMM not completed yet: its ImmDt slot is the head of the ring (6.3.3). Single source of truth, imm_table gets it via ibhMeta.rqmsnHead
 
 	ap_uint<24> req_next_psn;
 	ap_uint<24> req_old_unack;
@@ -95,6 +96,7 @@ struct rxStateRsp
 	ap_uint<24> lowestUnsackedPsn;
 	ap_uint<32> rcvdBytes;
 	ap_uint<24> sackTriggerCnt;
+	ap_uint<16> rqmsn; // RQMSN of the oldest WriteIMM not completed yet: its ImmDt slot is the head of the ring (6.3.3)
 	bool valid; // the QP exists and has been set up
 
 	rxStateRsp() {}
@@ -121,13 +123,15 @@ struct rxStateReq
 	ap_uint<24> lowestUnsackedPsn;
 	ap_uint<32> rcvdBytes;
 	ap_uint<24> sackTriggerCnt;
+	ap_uint<16> rqmsn;
+  	bool        error; // move the QP to ERROR (Responder Class C, Table 6-15)
 
-	rxStateReq() :isResponse(false), write(false) {}
-	rxStateReq(ap_uint<24> qpn, bool isRsp)
-		:qpn(qpn), isResponse(isRsp), write(false) {}
-	rxStateReq(ap_uint<16> qpn, const rxStateRsp& s)
-		:qpn(qpn), epsn(s.epsn), retryCounter(0x7), isResponse(false), write(true), bitmap(s.bitmap), lastmap(s.lastmap), immmap(s.immmap), prevAr(s.prevAr),
-		 maxRcvPsn(s.maxRcvPsn), lowestUnsackedPsn(s.lowestUnsackedPsn), rcvdBytes(s.rcvdBytes), sackTriggerCnt(s.sackTriggerCnt) {}
+  	rxStateReq() :isResponse(false), write(false), error(false) {}
+  	rxStateReq(ap_uint<24> qpn, bool isRsp)
+  		:qpn(qpn), isResponse(isRsp), write(false), error(false) {}
+  	rxStateReq(ap_uint<16> qpn, const rxStateRsp& s)
+  		:qpn(qpn), epsn(s.epsn), retryCounter(0x7), isResponse(false), write(true), bitmap(s.bitmap), lastmap(s.lastmap), immmap(s.immmap), prevAr(s.prevAr),
+  		 maxRcvPsn(s.maxRcvPsn), lowestUnsackedPsn(s.lowestUnsackedPsn), rcvdBytes(s.rcvdBytes), sackTriggerCnt(s.sackTriggerCnt), rqmsn(s.rqmsn), error(false) {}
 };
 
 // ------------------------------------------------------------------------------------------------
@@ -241,6 +245,9 @@ void state_table(
 				state_table[rxRequest.qpn].resp_lowest_unsacked_psn = rxRequest.lowestUnsackedPsn;
 				state_table[rxRequest.qpn].resp_rcvd_bytes          = rxRequest.rcvdBytes;
 				state_table[rxRequest.qpn].resp_sack_trigger_cnt    = rxRequest.sackTriggerCnt;
+				state_table[rxRequest.qpn].resp_rqmsn               = rxRequest.rqmsn;
+  				if (rxRequest.error)
+  					state_table[rxRequest.qpn].state                = ERROR; // incoming packets are dropped from now on
 			}
 		}
 		else if (!rxRequest.write)   
@@ -262,6 +269,7 @@ void state_table(
 				rsp.lowestUnsackedPsn = entry.resp_lowest_unsacked_psn;
 				rsp.rcvdBytes         = entry.resp_rcvd_bytes;
 				rsp.sackTriggerCnt    = entry.resp_sack_trigger_cnt;
+				rsp.rqmsn = entry.resp_rqmsn;
 				rsp.valid             = entry.state == READY_SEND && rxRequest.qpn < MAX_QPS;
 				stateTable2rxIbh_rsp.write(rsp);
 			}
@@ -321,6 +329,7 @@ void state_table(
 				state_table[ifRequest.qpn].resp_lowest_unsacked_psn = ifRequest.local_psn - 1;
 				state_table[ifRequest.qpn].resp_rcvd_bytes          = 0;
 				state_table[ifRequest.qpn].resp_sack_trigger_cnt    = 0;
+				state_table[ifRequest.qpn].resp_rqmsn = 1; // the first WriteIMM has RQMSN 1
 				//stateTable2rxIbh_inv.write(ifRequest.qpn);
 				state_table[ifRequest.qpn].state = READY_SEND; // Coyote always sends new_state = 0: a full setup is the move to RTS
 			} else {

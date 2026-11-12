@@ -83,9 +83,9 @@ void rx_exh_fsm(
 			                            rdmaHeader.getVirtualAddress(), payLoadLength, PKG_NR, PKG_HOST, 0));
 			
 			if (immPkt || meta.immInc != 0)
-				rxExh2immTable_req.write(rxImmReq(meta.dest_qp, immPkt, exHeader.mrc.rqmsn, exHeader.mrc.immDt, dmaMeta.rqmsn, meta.immInc));
+				rxExh2immTable_req.write(rxImmReq(meta.dest_qp, immPkt, exHeader.mrc.rqmsn, exHeader.mrc.immDt, meta.rqmsnHead, meta.immInc));
 			if (meta.msnInc != 0)
-				rxExh2msnTable_upd_req.write(rxMsnReq(meta.dest_qp, dmaMeta.msn + meta.msnInc, dmaMeta.rqmsn + meta.immInc));
+				rxExh2msnTable_upd_req.write(rxMsnReq(meta.dest_qp, dmaMeta.msn + meta.msnInc));
 			if (meta.ackReq)
 				rx_exhEventMetaFifo.write(ackEvent(meta.dest_qp, meta.cack, false)); // todo: don't generate an ACK, but a SACK request one all previous packets arrived
 			
